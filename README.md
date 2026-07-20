@@ -9,6 +9,9 @@
 - 播放/暂停、前后跳转、播放速度和时间显示
 - 保留选区、删除选区、淡入、淡出、音量调节
 - 撤销/重做与 WAV 导出
+- Cloudflare Workers AI 多语言语音识别
+- 两分钟自动分片、带时间戳文字编辑
+- TXT、SRT、VTT 字幕导出
 - 响应式编辑器界面
 
 ## 本地开发
@@ -36,6 +39,20 @@ npx wrangler pages deploy dist --project-name=soundcut-web
 ```
 
 仓库也包含 GitHub Actions。请在 GitHub 仓库 Secrets 中配置 `CLOUDFLARE_API_TOKEN` 与 `CLOUDFLARE_ACCOUNT_ID`，之后推送到 `main` 会自动部署。
+
+### 开启 AI 文字识别
+
+项目使用 Pages Function `functions/api/transcribe.js` 调用 Cloudflare Workers AI。部署后需要添加 AI binding：
+
+1. 打开 Cloudflare 控制台中的 Pages 项目。
+2. 进入 **Settings → Bindings**。
+3. 点击 **Add binding → Workers AI**。
+4. Variable name 填写 `AI`。
+5. 保存后重新部署最新的 GitHub commit。
+
+`wrangler.jsonc` 中也已经声明了同名 binding。识别使用 `@cf/openai/whisper-large-v3-turbo`，默认自动检测语言，也可以在界面中手动选择语言。
+
+普通剪辑仍然只在本机完成。只有用户主动点击“开始识别”时，浏览器才会把两分钟一段的临时 WAV 发送到 Pages Function；项目不会持久保存音频。
 
 ## 技术说明
 
