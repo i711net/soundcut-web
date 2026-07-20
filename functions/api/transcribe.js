@@ -17,6 +17,13 @@ export async function onRequestPost({ request, env }) {
     if (audio.byteLength > MAX_CHUNK_BYTES) return Response.json({ error: '音频片段过大' }, { status: 413 })
     const language = new URL(request.url).searchParams.get('language') || 'auto'
     const mode = new URL(request.url).searchParams.get('mode') === 'song' ? 'song' : 'speech'
+    const lyricPrompts = {
+      zh: '这是中文歌曲。请按演唱顺序完整转写所有中文歌词，不要翻译，不要改写，不要跳过重复句。',
+      yue: '這是粵語歌曲。請按演唱順序完整轉寫所有粵語歌詞，不要翻譯，不要改寫，不要跳過重複句。',
+      en: 'This is an English song. Transcribe every sung English lyric in order. Do not translate, summarize, or skip repeated lines.',
+      ja: 'これは日本語の歌です。歌われた日本語の歌詞を順番どおり完全に書き起こし、翻訳や要約をしないでください。',
+      ko: '이것은 한국어 노래입니다. 부른 한국어 가사를 순서대로 빠짐없이 받아쓰고 번역하거나 요약하지 마세요.',
+    }
     const input = mode === 'song'
       ? {
           audio: toBase64(audio),
@@ -27,7 +34,7 @@ export async function onRequestPost({ request, env }) {
           log_prob_threshold: -2,
           compression_ratio_threshold: 3,
           beam_size: 8,
-          initial_prompt: 'This audio contains a song. Transcribe every sung lyric completely and in order. Do not summarize or skip repeated lines.',
+          ...(lyricPrompts[language] ? { initial_prompt: lyricPrompts[language] } : {}),
         }
       : { audio: toBase64(audio), task: 'transcribe', vad_filter: true, condition_on_previous_text: true }
     if (language !== 'auto') input.language = language
