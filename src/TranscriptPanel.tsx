@@ -7,6 +7,8 @@ type Props = {
   hasAudio: boolean
   language: string
   onLanguage: (value: string) => void
+  contentMode: 'speech' | 'song'
+  onContentMode: (value: 'speech' | 'song') => void
   segments: TranscriptSegment[]
   onSegments: (value: TranscriptSegment[]) => void
   onSeek: (time: number) => void
@@ -22,6 +24,9 @@ export default function TranscriptPanel(props: Props) {
     <div className="ai-intro"><Languages/><div><strong>多语言文字识别</strong><span>由 Cloudflare Workers AI 提供</span></div></div>
     <label>音频语言<select value={props.language} onChange={e => props.onLanguage(e.target.value)} disabled={working}>
       <option value="auto">自动检测</option><option value="zh">中文</option><option value="yue">粤语</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt">Português</option><option value="ru">Русский</option><option value="it">Italiano</option><option value="hi">हिन्दी</option>
+    </select></label>
+    <label>内容类型<select value={props.contentMode} onChange={e => props.onContentMode(e.target.value as 'speech' | 'song')} disabled={working}>
+      <option value="speech">讲话 / 播客</option><option value="song">歌曲 / 歌词</option>
     </select></label>
     <button className="transcribe-button" disabled={!props.hasAudio || working} onClick={props.onTranscribe}>{working ? <LoaderCircle className="spin"/> : <Sparkles/>}{working ? `正在识别 ${progress}%` : segments.length ? '重新识别' : '开始识别'}</button>
     <div className="cloud-notice"><Cloud/>仅点击开始后，音频片段会上传至 Cloudflare AI</div>

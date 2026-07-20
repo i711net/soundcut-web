@@ -16,7 +16,20 @@ export async function onRequestPost({ request, env }) {
     if (!audio.byteLength) return Response.json({ error: '没有收到音频数据' }, { status: 400 })
     if (audio.byteLength > MAX_CHUNK_BYTES) return Response.json({ error: '音频片段过大' }, { status: 413 })
     const language = new URL(request.url).searchParams.get('language') || 'auto'
-    const input = { audio: toBase64(audio), task: 'transcribe', vad_filter: true, condition_on_previous_text: true }
+    const mode = new URL(request.url).searchParams.get('mode') === 'song' ? 'song' : 'speech'
+    const input = mode === 'song'
+      ? {
+          audio: toBase64(audio),
+          task: 'transcribe',
+          vad_filter: false,
+          condition_on_previous_text: true,
+          no_speech_threshold: 0.9,
+          log_prob_threshold: -2,
+          compression_ratio_threshold: 3,
+          beam_size: 8,
+          initial_prompt: 'This audio contains a song. Transcribe every sung lyric completely and in order. Do not summarize or skip repeated lines.',
+        }
+      : { audio: toBase64(audio), task: 'transcribe', vad_filter: true, condition_on_previous_text: true }
     if (language !== 'auto') input.language = language
     const result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', input)
     return Response.json({
@@ -31,6 +44,6 @@ export async function onRequestPost({ request, env }) {
   }
 }
 
-export function onRequest() {
-  return Response.json({ error: 'Method not allowed' }, { status: 405, headers: { Allow: 'POST' } })
+export function onRequestGet() {
+  return Response.json({ ok: true, service: 'soundcut-transcription', ai: 'configured-at-runtime' })
 }

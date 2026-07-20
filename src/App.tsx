@@ -20,6 +20,7 @@ export default function App() {
   const [status, setStatus] = useState('准备就绪')
   const [inspectorTab, setInspectorTab] = useState<'properties' | 'transcript'>('properties')
   const [language, setLanguage] = useState('auto')
+  const [contentMode, setContentMode] = useState<'speech' | 'song'>('speech')
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([])
   const [transcribing, setTranscribing] = useState(false)
   const [transcriptionProgress, setTranscriptionProgress] = useState(0)
@@ -63,12 +64,18 @@ export default function App() {
   const transcribe = async () => {
     if (!buffer || transcribing) return
     setTranscribing(true); setTranscriptionError(''); setTranscript([]); setInspectorTab('transcript'); setStatus('正在进行云端文字识别…')
-    const chunkSeconds = 120, chunkCount = Math.ceil(buffer.duration / chunkSeconds), merged: TranscriptSegment[] = []
+    const chunkSeconds = contentMode === 'song' ? 30 : 120, chunkCount = Math.ceil(buffer.duration / chunkSeconds), merged: TranscriptSegment[] = []
     try {
       for (let index = 0; index < chunkCount; index++) {
         const start = index * chunkSeconds, end = Math.min(buffer.duration, start + chunkSeconds)
         const chunk = renderBuffer(buffer, { start, end, gain: settings.gain, fadeIn: 0, fadeOut: 0 })
-        const response = await fetch(`/api/transcribe?language=${encodeURIComponent(language)}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: bufferToWav(chunk) })
+        const response = await fetch(`/api/transcribe?language=${encodeURIComponent(language)}&mode=${contentMode}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: bufferToWav(chunk) })
+        const contentType = response.headers.get('content-type') || ''
+        if (!contentType.includes('application/json')) {
+          throw new Error(response.status === 404 || contentType.includes('text/html')
+            ? 'AI 接口未部署：请确认 GitHub 包含 functions/api/transcribe.js，并在 Cloudflare 重新部署'
+            : `识别接口返回了无法读取的内容（HTTP ${response.status}）`)
+        }
         const data = await response.json() as { error?: string; text?: string; vtt?: string; segments?: Array<{ start?: number; end?: number; text?: string }> }
         if (!response.ok) throw new Error(data.error || `识别服务返回 ${response.status}`)
         let chunkSegments = data.vtt ? parseVtt(data.vtt, start) : (data.segments || []).filter(item => item.text).map((item, i) => ({ id: i, start: (item.start || 0) + start, end: (item.end || end - start) + start, text: item.text || '' }))
@@ -107,7 +114,7 @@ export default function App() {
           <label>播放速度 <output>{speed.toFixed(2)}×</output><input type="range" min=".5" max="2" step=".05" value={speed} onChange={e => setSpeed(+e.target.value)}/></label><hr/>
           <label>导出格式<select><option>WAV · 16 bit</option></select></label>
           <div className="selection-info"><span>当前选区</span><b>{formatTime(selection[0], true)} — {formatTime(selection[1], true)}</b></div>
-        </div> : <TranscriptPanel fileName={fileName} hasAudio={!!buffer} language={language} onLanguage={setLanguage} segments={transcript} onSegments={setTranscript} onSeek={seek} onTranscribe={transcribe} progress={transcriptionProgress} working={transcribing} error={transcriptionError}/>} 
+        </div> : <TranscriptPanel fileName={fileName} hasAudio={!!buffer} language={language} onLanguage={setLanguage} contentMode={contentMode} onContentMode={setContentMode} segments={transcript} onSegments={setTranscript} onSeek={seek} onTranscribe={transcribe} progress={transcriptionProgress} working={transcribing} error={transcriptionError}/>} 
       </aside>
     </main>
     <footer><div className="time"><strong>{formatTime(currentTime, true)}</strong><span>/ {formatTime(buffer?.duration ?? 0, true)}</span></div><div className="transport"><button onClick={() => seek(Math.max(0, currentTime - 5))}><SkipBack/></button><button className="play" onClick={play}>{playing ? <Pause fill="currentColor"/> : <Play fill="currentColor"/>}</button><button onClick={() => seek(Math.min(buffer?.duration ?? 0, currentTime + 5))}><SkipForward/></button></div><div className="zoom"><ZoomOut/><input type="range" defaultValue="60"/><ZoomIn/></div><div className="status"><RotateCcw/>{status}</div></footer>
