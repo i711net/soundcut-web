@@ -1,0 +1,13 @@
+@media (max-width: 780px) {
+  .workspace { width: 100%; min-width: 0; }
+  .track { grid-template-columns: minmax(0, 1fr); }
+  .track-meta { display: none; }
+  .track-canvas { grid-column: 1; min-width: 0; }
+  .ruler { padding: 0 8px; overflow: hidden; }
+  .ruler span:nth-child(even) { display: none; }
+  .empty { padding: 10px; }
+  .empty strong { font-size: 13px; text-align: center; }
+  .empty span { max-width: 210px; font-size: 10px; text-align: center; }
+  .placeholder { font-size: 12px; }
+  .privacy { max-width: 270px; text-align: center; }
+}

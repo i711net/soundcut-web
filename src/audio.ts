@@ -1,0 +1,58 @@
+export type EditSettings = { start: number; end: number; gain: number; fadeIn: number; fadeOut: number }
+
+export function renderBuffer(source: AudioBuffer, settings: EditSettings): AudioBuffer {
+  const startFrame = Math.floor(settings.start * source.sampleRate)
+  const endFrame = Math.ceil(settings.end * source.sampleRate)
+  const length = Math.max(1, endFrame - startFrame)
+  const output = new AudioBuffer({ length, numberOfChannels: source.numberOfChannels, sampleRate: source.sampleRate })
+  for (let channel = 0; channel < source.numberOfChannels; channel++) {
+    const input = source.getChannelData(channel)
+    const target = output.getChannelData(channel)
+    for (let i = 0; i < length; i++) {
+      const time = i / source.sampleRate
+      const fadeInGain = settings.fadeIn > 0 ? Math.min(1, time / settings.fadeIn) : 1
+      const remaining = (length - i) / source.sampleRate
+      const fadeOutGain = settings.fadeOut > 0 ? Math.min(1, remaining / settings.fadeOut) : 1
+      target[i] = (input[startFrame + i] ?? 0) * settings.gain * fadeInGain * fadeOutGain
+    }
+  }
+  return output
+}
+
+export function removeRange(source: AudioBuffer, from: number, to: number): AudioBuffer {
+  const a = Math.floor(from * source.sampleRate)
+  const b = Math.ceil(to * source.sampleRate)
+  const output = new AudioBuffer({ length: source.length - (b - a), numberOfChannels: source.numberOfChannels, sampleRate: source.sampleRate })
+  for (let c = 0; c < source.numberOfChannels; c++) {
+    const input = source.getChannelData(c)
+    const target = output.getChannelData(c)
+    target.set(input.subarray(0, a), 0)
+    target.set(input.subarray(b), a)
+  }
+  return output
+}
+
+export function bufferToWav(buffer: AudioBuffer): Blob {
+  const channels = buffer.numberOfChannels
+  const size = buffer.length * channels * 2
+  const view = new DataView(new ArrayBuffer(44 + size))
+  const text = (offset: number, value: string) => [...value].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)))
+  text(0, 'RIFF'); view.setUint32(4, 36 + size, true); text(8, 'WAVE'); text(12, 'fmt ')
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, channels, true)
+  view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * channels * 2, true)
+  view.setUint16(32, channels * 2, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, size, true)
+  let offset = 44
+  for (let i = 0; i < buffer.length; i++) for (let c = 0; c < channels; c++) {
+    const sample = Math.max(-1, Math.min(1, buffer.getChannelData(c)[i]))
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true); offset += 2
+  }
+  return new Blob([view], { type: 'audio/wav' })
+}
+
+export function formatTime(value: number, precise = false) {
+  const safe = Math.max(0, value || 0)
+  const minutes = Math.floor(safe / 60)
+  const seconds = Math.floor(safe % 60)
+  const ms = Math.floor((safe % 1) * 1000)
+  return precise ? `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(ms).padStart(3, '0')}` : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
