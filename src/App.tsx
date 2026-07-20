@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText } from 'lucide-react'
+import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText, Video } from 'lucide-react'
 import Waveform from './Waveform'
 import { bufferToWav, formatTime, removeRange, renderBuffer, type EditSettings } from './audio'
 import TranscriptPanel from './TranscriptPanel'
@@ -28,15 +28,23 @@ export default function App() {
   const [transcriptionError, setTranscriptionError] = useState('')
   const [exportFormat, setExportFormat] = useState<AudioExportFormat>('wav')
   const [mediaWorking, setMediaWorking] = useState(false)
+  const [videoUrl, setVideoUrl] = useState('')
   const audioContext = useRef<AudioContext | null>(null), source = useRef<AudioBufferSourceNode | null>(null), startedAt = useRef(0), offset = useRef(0), frame = useRef(0)
+  const videoElement = useRef<HTMLVideoElement | null>(null), videoObjectUrl = useRef('')
+  const currentTimeRef = useRef(0)
   const input = useRef<HTMLInputElement>(null)
 
-  useEffect(() => () => { source.current?.stop(); cancelAnimationFrame(frame.current); audioContext.current?.close() }, [])
+  useEffect(() => () => { source.current?.stop(); cancelAnimationFrame(frame.current); audioContext.current?.close(); if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current) }, [])
+  useEffect(() => { if (videoElement.current) videoElement.current.playbackRate = speed }, [speed])
+  useEffect(() => { currentTimeRef.current = currentTime }, [currentTime])
 
   const loadFile = async (file?: File) => {
     if (!file) return
     try {
       const isVideo = file.type.startsWith('video/')
+      if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current)
+      videoObjectUrl.current = isVideo ? URL.createObjectURL(file) : ''
+      setVideoUrl(videoObjectUrl.current)
       setMediaWorking(isVideo); setStatus(isVideo ? '正在加载 FFmpeg 并提取视频音轨…' : '正在解析音频…')
       const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
       const sourceData = isVideo ? await (await extractAudioFromVideo(file)).arrayBuffer() : await file.arrayBuffer()
@@ -48,18 +56,19 @@ export default function App() {
 
   const stop = (keepTime = true) => {
     if (source.current) { try { source.current.stop() } catch { /* already stopped */ } source.current = null }
-    cancelAnimationFrame(frame.current); setPlaying(false); if (!keepTime) setCurrentTime(0)
+    cancelAnimationFrame(frame.current); videoElement.current?.pause(); setPlaying(false); if (!keepTime) { setCurrentTime(0); if (videoElement.current) videoElement.current.currentTime = 0 }
   }
   const play = async () => {
     if (!buffer) return input.current?.click()
     if (playing) return stop()
     const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx; await ctx.resume()
     const node = ctx.createBufferSource(), gain = ctx.createGain(); node.buffer = buffer; node.playbackRate.value = speed; gain.gain.value = settings.gain; node.connect(gain).connect(ctx.destination)
-    const from = currentTime >= buffer.duration ? 0 : currentTime; offset.current = from; startedAt.current = ctx.currentTime; source.current = node; node.start(0, from); setPlaying(true)
+    const from = currentTimeRef.current >= buffer.duration ? 0 : currentTimeRef.current; offset.current = from; startedAt.current = ctx.currentTime; source.current = node; node.start(0, from); setPlaying(true)
+    if (videoElement.current) { videoElement.current.currentTime = from; videoElement.current.playbackRate = speed; void videoElement.current.play() }
     const tick = () => { const next = offset.current + (ctx.currentTime - startedAt.current) * speed; setCurrentTime(Math.min(next, buffer.duration)); if (next < buffer.duration && source.current) frame.current = requestAnimationFrame(tick) }
-    frame.current = requestAnimationFrame(tick); node.onended = () => { source.current = null; cancelAnimationFrame(frame.current); setPlaying(false) }
+    frame.current = requestAnimationFrame(tick); node.onended = () => { source.current = null; cancelAnimationFrame(frame.current); videoElement.current?.pause(); setPlaying(false) }
   }
-  const seek = (time: number) => { const wasPlaying = playing; stop(); setCurrentTime(time); if (wasPlaying) setTimeout(play, 0) }
+  const seek = (time: number) => { const wasPlaying = playing; stop(); currentTimeRef.current = time; setCurrentTime(time); if (videoElement.current) videoElement.current.currentTime = time; if (wasPlaying) setTimeout(play, 0) }
   const remember = () => { if (buffer) { setHistory(h => [...h.slice(-19), { buffer, selection }]); setFuture([]) } }
   const keepSelection = () => { if (!buffer || selection[1] - selection[0] < .02) return; remember(); const next = renderBuffer(buffer, { ...settings, start: selection[0], end: selection[1], gain: 1, fadeIn: 0, fadeOut: 0 }); stop(false); setBuffer(next); setSelection([0, next.duration]); setSettings(s => ({ ...s, start: 0, end: next.duration })); setStatus('已保留选区') }
   const deleteSelection = () => { if (!buffer || selection[1] - selection[0] < .02 || selection[1] - selection[0] >= buffer.duration) return; remember(); const next = removeRange(buffer, ...selection); stop(false); setBuffer(next); setSelection([0, next.duration]); setSettings(s => ({ ...s, end: next.duration })); setStatus('已删除选区') }
@@ -116,6 +125,7 @@ export default function App() {
         <div className="ruler">{Array.from({length: 9}, (_, i) => <span key={i}>{formatTime((buffer?.duration ?? 120) * i / 8)}</span>)}</div>
         <div className="track"><div className="track-meta"><span>1</span><strong>音轨 1</strong><small>{buffer ? `${buffer.numberOfChannels === 1 ? '单声道' : '立体声'} · ${buffer.sampleRate} Hz` : '等待导入'}</small></div><div className="track-canvas">{buffer ? <Waveform buffer={buffer} selection={selection} currentTime={currentTime} onSelection={setSelection} onSeek={seek}/> : <button className="empty" onClick={() => input.current?.click()}><Upload/><strong>拖入一段声音，开始创作</strong><span>支持浏览器可解码的 WAV、MP3、M4A、OGG</span></button>}</div></div>
         <div className="track secondary"><div className="track-meta"><span>2</span><strong>背景音乐</strong><small>下一版本</small></div><div className="track-canvas placeholder"><Music2/><span>多轨混音即将加入</span></div></div>
+        {videoUrl && <div className="video-preview"><div><Video/><span>视频预览</span><small>与时间轴同步</small></div><video ref={videoElement} src={videoUrl} muted playsInline preload="metadata"/></div>}
         <div className="privacy"><LockKeyhole/> 默认本地处理；仅开启 AI 识别时上传临时片段</div>
       </section>
       <aside className="inspector">
