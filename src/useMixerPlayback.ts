@@ -2,6 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { audibleTracks, durationOfTracks, trackRate, type MixerTrack } from './mixer'
 import { connectVoiceEffects } from './voice-effects'
 
+export type MeterState = { master: { left: number; right: number }; tracks: Record<string, { left: number; right: number }>; clipping: boolean; limiterReduction: number }
+
+const silentMeters: MeterState = { master: { left: 0, right: 0 }, tracks: {}, clipping: false, limiterReduction: 0 }
+const analyserPair = (context: AudioContext, source: AudioNode) => {
+  const splitter = context.createChannelSplitter(2), left = context.createAnalyser(), right = context.createAnalyser()
+  left.fftSize = right.fftSize = 256; left.smoothingTimeConstant = right.smoothingTimeConstant = .55
+  source.connect(splitter); splitter.connect(left, 0); splitter.connect(right, 1); return { left, right }
+}
+const analyserPeak = (analyser: AnalyserNode) => { const data = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(data); let peak = 0; for (const value of data) peak = Math.max(peak, Math.abs(value)); return peak }
+
 export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, masterVolume: number, onTime: (time: number) => void) {
   const context = useRef<AudioContext | null>(null)
   const nodes = useRef<Map<string, AudioBufferSourceNode>>(new Map())
@@ -9,12 +19,13 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   const frame = useRef(0), startedAt = useRef(0), offset = useRef(0)
   const effectSignature = useRef('')
   const [playing, setPlaying] = useState(false)
+  const [meters, setMeters] = useState<MeterState>(silentMeters)
   const duration = durationOfTracks(tracks, masterRate)
 
   const stop = useCallback(() => {
     gains.current.forEach(gain => { try { gain.gain.cancelScheduledValues(gain.context.currentTime); gain.gain.setValueAtTime(0, gain.context.currentTime); gain.disconnect() } catch { /* disconnected */ } })
     nodes.current.forEach(node => { try { node.stop(); node.disconnect() } catch { /* ended */ } })
-    nodes.current.clear(); gains.current.clear(); cancelAnimationFrame(frame.current); setPlaying(false)
+    nodes.current.clear(); gains.current.clear(); cancelAnimationFrame(frame.current); setPlaying(false); setMeters(silentMeters)
     const oldContext = context.current; context.current = null
     if (oldContext && oldContext.state !== 'closed') void oldContext.close().catch(() => undefined)
   }, [])
@@ -25,7 +36,12 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     const playable = audibleTracks(tracks)
     if (!playable.length) return
     offset.current = Math.max(0, Math.min(time, duration)); startedAt.current = audioContext.currentTime
+    const master = audioContext.createGain(), limiter = audioContext.createDynamicsCompressor()
+    limiter.threshold.value = -1; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = .003; limiter.release.value = .12
+    master.connect(limiter).connect(audioContext.destination)
+    const masterMeters = analyserPair(audioContext, limiter), trackMeters = new Map<string, ReturnType<typeof analyserPair>>(), trackBuses = new Map<string, GainNode>()
     for (const track of playable) {
+      const bus = audioContext.createGain(); bus.connect(master); trackBuses.set(track.id, bus); trackMeters.set(track.id, analyserPair(audioContext, bus))
       const clips = track.clips
       for (const clip of clips) {
         const rate = trackRate(track, masterRate) * clip.playbackRate, clipEnd = clip.start + clip.duration / rate
@@ -40,7 +56,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
         if (clip.fadeIn > elapsed) gain.gain.linearRampToValueAtTime(level, startAt + clip.fadeIn - elapsed)
         const fadeOutStart = Math.max(0, clipLength - clip.fadeOut)
         if (clip.fadeOut > 0) { const untilFade = Math.max(0, fadeOutStart - elapsed); gain.gain.setValueAtTime(elapsed >= fadeOutStart ? level * Math.max(0, (clipLength - elapsed) / clip.fadeOut) : level, startAt + untilFade); gain.gain.linearRampToValueAtTime(0, startAt + Math.max(0, clipLength - elapsed)) }
-        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(audioContext.destination); node.start(startAt, bufferOffset, clip.offset + clip.duration - bufferOffset)
+        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(bus); node.start(startAt, bufferOffset, clip.offset + clip.duration - bufferOffset)
         node.onended = () => nodes.current.delete(key); nodes.current.set(key, node); gains.current.set(key, gain)
       }
     }
@@ -48,6 +64,10 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     const tick = () => {
       const timeNow = Math.min(duration, offset.current + (audioContext.currentTime - startedAt.current))
       onTime(timeNow)
+      const trackValues: MeterState['tracks'] = {}; let inputClipping = false
+      trackMeters.forEach((pair, id) => { const left = analyserPeak(pair.left), right = analyserPeak(pair.right); trackValues[id] = { left, right }; if (Math.max(left, right) >= 1) inputClipping = true })
+      const masterLeft = analyserPeak(masterMeters.left), masterRight = analyserPeak(masterMeters.right), reduction = limiter.reduction
+      setMeters({ master: { left: masterLeft, right: masterRight }, tracks: trackValues, clipping: inputClipping || reduction < -3, limiterReduction: reduction })
       if (timeNow < duration && nodes.current.size) frame.current = requestAnimationFrame(tick); else stop()
     }
     frame.current = requestAnimationFrame(tick)
@@ -75,5 +95,5 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   }, [playFrom, playing, tracks])
 
   useEffect(() => () => { stop(); void context.current?.close() }, [stop])
-  return { playing, duration, playFrom, stop }
+  return { playing, duration, playFrom, stop, meters }
 }

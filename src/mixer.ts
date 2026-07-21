@@ -53,6 +53,9 @@ export async function mixTracks(tracks: MixerTrack[], selectedOnly = true, maste
   const channels = Math.max(...allBuffers.map(buffer => buffer.numberOfChannels))
   const duration = durationOfTracks(sources, masterRate)
   const context = new OfflineAudioContext(channels, Math.ceil(duration * sampleRate), sampleRate)
+  const master = context.createGain(), limiter = context.createDynamicsCompressor()
+  limiter.threshold.value = -1; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = .003; limiter.release.value = .12
+  master.connect(limiter).connect(context.destination)
   for (const track of sources) {
     const clips = track.clips
     for (const clip of clips) {
@@ -62,7 +65,7 @@ export async function mixTracks(tracks: MixerTrack[], selectedOnly = true, maste
       gain.gain.setValueAtTime(clip.fadeIn > 0 ? 0 : level, clip.start)
       if (clip.fadeIn > 0) gain.gain.linearRampToValueAtTime(level, clip.start + Math.min(clip.fadeIn, clipLength))
       if (clip.fadeOut > 0) { gain.gain.setValueAtTime(level, Math.max(clip.start, clip.start + clipLength - clip.fadeOut)); gain.gain.linearRampToValueAtTime(0, clip.start + clipLength) }
-      connectVoiceEffects(context, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(context.destination); node.start(clip.start, clip.offset, clip.duration)
+      connectVoiceEffects(context, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(master); node.start(clip.start, clip.offset, clip.duration)
     }
   }
   return context.startRendering()

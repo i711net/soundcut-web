@@ -26,6 +26,8 @@ import './snap-controls.css'
 import './clip-inspector.css'
 import './timeline-zoom.css'
 import './fade-visuals.css'
+import LevelMeters from './LevelMeters'
+import './level-meters.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -607,6 +609,7 @@ export default function App() {
           <div className="stream-input"><input type="url" value={streamUrlInput} onChange={e => setStreamUrlInput(e.target.value)} placeholder="粘贴 MP4 / WebM / HLS 媒体直链"/><button onClick={openStream}>播放</button></div>
           <div className="video-monitor-actions"><button onClick={streamSourceUrl ? extractStreamAudio : extractVideoToMain} disabled={streamSourceUrl ? mediaWorking : !trackStore.tracks[1].buffer}><CopyPlus/>{streamSourceUrl && !trackStore.tracks[1].buffer ? '提取网络原声' : '提取到主轨'}</button><button className={trackStore.tracks[1].solo ? 'active' : ''} onClick={isolateVideoAudio} disabled={!trackStore.tracks[1].buffer}><Headphones/>{trackStore.tracks[1].solo ? '取消隔离' : '隔离原声'}</button></div>
         </section>
+        <LevelMeters tracks={trackStore.tracks} meters={mixerPlayback.meters}/>
         <div className="inspector-tabs">
           <button className={inspectorTab === 'properties' ? 'active' : ''} onClick={() => setInspectorTab('properties')}><SlidersHorizontal/>属性</button>
           <button className={inspectorTab === 'transcript' ? 'active' : ''} onClick={() => setInspectorTab('transcript')}><FileText/>文字{transcript.length > 0 && <i>{transcript.length}</i>}</button>
