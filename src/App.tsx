@@ -121,6 +121,14 @@ export default function App() {
   }
   const requestImport = (target: string) => { importTarget.current = target === 'main' ? 'track-1' : target === 'music' ? 'track-3' : target; input.current?.click() }
   const addAudioTrack = () => { trackStore.addTrack(); setStatus('已添加空音轨，可把任意片段拖到这里') }
+  const findAvailableImportStart = (trackId: string, sourceDuration: number, requestedStart: number) => {
+    const track = trackStore.tracks.find(item => item.id === trackId); if (!track?.clips.length) return { start: Math.max(0, requestedStart), appended: false }
+    const trackRate = track.playbackRate * track.clipPlaybackRate, newDuration = sourceDuration / trackRate
+    const intervals = track.clips.map(clip => ({ start: clip.start, end: clip.start + clip.duration / (trackRate * clip.playbackRate) })).sort((a, b) => a.start - b.start)
+    const overlaps = intervals.some(interval => requestedStart < interval.end - .001 && requestedStart + newDuration > interval.start + .001)
+    if (!overlaps) return { start: Math.max(0, requestedStart), appended: false }
+    return { start: Math.max(...intervals.map(interval => interval.end)) + (snapEnabled ? snapGap : 0), appended: true }
+  }
   const openMediaToClipboard = async (file?: File) => {
     if (!file) return
     try {
@@ -129,10 +137,10 @@ export default function App() {
       const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
       const data = isVideo ? await (await extractAudioFromVideo(file)).arrayBuffer() : await file.arrayBuffer()
       const decoded = await ctx.decodeAudioData(data)
-      const trackId = trackStore.activeId, at = currentTimeRef.current, clipId = trackStore.addClip(trackId, decoded, isVideo ? `${name} · 原声` : name, at)
+      const trackId = trackStore.activeId, placement = findAvailableImportStart(trackId, decoded.duration, currentTimeRef.current), at = placement.start, clipId = trackStore.addClip(trackId, decoded, isVideo ? `${name} · 原声` : name, at)
       if (isVideo) { if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current); videoObjectUrl.current = URL.createObjectURL(file); setVideoUrl(videoObjectUrl.current); setStreamSourceUrl('') }
       setAudioClipboard(decoded); setFileName(name); setSelectedClipId(clipId); setSelection([at, at + decoded.duration]); setSettings(value => ({ ...value, start: at, end: at + decoded.duration }))
-      setStatus(`${isVideo ? '视频原声' : '音频'}已放入当前音轨的 ${formatTime(at, true)} 位置，可直接播放或拖到其他音轨`)
+      setStatus(placement.appended ? `${isVideo ? '视频原声' : '音频'}与红线位置的片段重叠，已自动接到当前音轨末尾 ${formatTime(at, true)}` : `${isVideo ? '视频原声' : '音频'}已放入红线所在的空闲位置 ${formatTime(at, true)}`)
     } catch { setStatus('无法打开该媒体文件') } finally { setMediaWorking(false) }
   }
   const openStream = () => {
