@@ -5,6 +5,6 @@ import './styles.css'
 import './mobile.css'
 import './transcript.css'
 import './lyrics.css'
-import './video.css'
+import './media-track.css'
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
