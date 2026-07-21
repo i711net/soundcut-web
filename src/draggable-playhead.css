@@ -1,0 +1,30 @@
+.timeline-playhead {
+  width: 2px;
+  pointer-events: auto;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.timeline-playhead::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -7px;
+  width: 16px;
+  background: transparent;
+}
+
+.timeline-playhead:active {
+  background: #ff8b78;
+  box-shadow: 0 0 8px #ff705a;
+}
+
+.timeline-playhead span {
+  cursor: grab;
+  user-select: none;
+}
+
+.timeline-playhead:active span {
+  cursor: grabbing;
+}
