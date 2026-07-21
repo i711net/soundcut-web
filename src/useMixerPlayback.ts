@@ -12,7 +12,8 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   const duration = durationOfTracks(tracks, masterRate)
 
   const stop = useCallback(() => {
-    nodes.current.forEach(node => { try { node.stop() } catch { /* ended */ } })
+    gains.current.forEach(gain => { try { gain.gain.cancelScheduledValues(gain.context.currentTime); gain.gain.setValueAtTime(0, gain.context.currentTime); gain.disconnect() } catch { /* disconnected */ } })
+    nodes.current.forEach(node => { try { node.stop(); node.disconnect() } catch { /* ended */ } })
     nodes.current.clear(); gains.current.clear(); cancelAnimationFrame(frame.current); setPlaying(false)
   }, [])
 
