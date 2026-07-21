@@ -45,6 +45,15 @@ export function insertBuffer(source: AudioBuffer, fragment: AudioBuffer, at: num
   return output
 }
 
+export function moveRange(source: AudioBuffer, from: number, to: number, newStart: number): AudioBuffer {
+  const start = Math.max(0, Math.min(source.duration, from)), end = Math.max(start, Math.min(source.duration, to)), duration = end - start
+  if (duration < .001) return source
+  const target = Math.max(0, Math.min(source.duration - duration, newStart))
+  if (Math.abs(target - start) < .001) return source
+  const fragment = renderBuffer(source, { start, end, gain: 1, fadeIn: 0, fadeOut: 0 })
+  return insertBuffer(removeRange(source, start, end), fragment, target)
+}
+
 export function transformRange(source: AudioBuffer, from: number, to: number, mode: 'silence' | 'reverse' | 'normalize' | 'fadeIn' | 'fadeOut'): AudioBuffer {
   const start = Math.max(0, Math.min(source.length, Math.floor(from * source.sampleRate))), end = Math.max(start, Math.min(source.length, Math.ceil(to * source.sampleRate)))
   const output = new AudioBuffer({ length: source.length, numberOfChannels: source.numberOfChannels, sampleRate: source.sampleRate })

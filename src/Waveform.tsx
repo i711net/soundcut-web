@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
 export type WaveformMark = { id: string; start: number; end: number; label: string; kind: 'split' | 'copy' | 'paste' | 'cut' | 'clip' }
-type Props = { buffer: AudioBuffer; selection: [number, number]; currentTime: number; marks?: WaveformMark[]; onSelection: (value: [number, number]) => void; onSeek: (value: number) => void }
+type Props = { buffer: AudioBuffer; selection: [number, number]; currentTime: number; marks?: WaveformMark[]; onSelection: (value: [number, number]) => void; onSeek: (value: number) => void; onMoveSelection?: (from: number, to: number, newStart: number) => void }
 
-export default function Waveform({ buffer, selection, currentTime, marks = [], onSelection, onSeek }: Props) {
+export default function Waveform({ buffer, selection, currentTime, marks = [], onSelection, onSeek, onMoveSelection }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const [dragStart, setDragStart] = useState<number | null>(null)
+  const [moving, setMoving] = useState(false)
+  const moveOrigin = useRef<[number, number] | null>(null)
   const duration = buffer.duration
 
   useEffect(() => {
@@ -48,13 +50,13 @@ export default function Waveform({ buffer, selection, currentTime, marks = [], o
     return Math.max(0, Math.min(duration, (event.clientX - rect.left) / rect.width * duration))
   }
   const selectedDuration = Math.max(0, selection[1] - selection[0])
-  return <div className={`waveform-shell ${dragStart !== null ? 'drag-selecting' : ''}`}>
+  return <div className={`waveform-shell ${dragStart !== null ? 'drag-selecting' : ''} ${moving ? 'moving-clip' : ''}`}>
     <canvas ref={canvas} className="waveform" aria-label="按住鼠标左键并拖动，选择需要剪切的音频范围"
-      onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); const time = timeAt(e); setDragStart(time); onSelection([time, time]); canvas.current?.setPointerCapture(e.pointerId) }}
-      onPointerMove={e => { if (dragStart === null) return; e.preventDefault(); const time = timeAt(e); onSelection([Math.min(dragStart, time), Math.max(dragStart, time)]) }}
-      onPointerUp={e => { const time = timeAt(e); if (dragStart !== null && Math.abs(time - dragStart) < .05) onSeek(time); if (canvas.current?.hasPointerCapture(e.pointerId)) canvas.current.releasePointerCapture(e.pointerId); setDragStart(null) }}
-      onPointerCancel={() => setDragStart(null)}/>
-    {dragStart !== null && <div className="drag-selection-tip"><strong>正在选择剪切区域</strong><span>{selectedDuration.toFixed(3)} 秒</span></div>}
-    {dragStart === null && selectedDuration >= .01 && selectedDuration < duration - .01 && <div className="selection-ready-tip">已选择 {selectedDuration.toFixed(3)} 秒 · 点击上方“剪切”</div>}
+      onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); const time = timeAt(e), hasMovableSelection = selectedDuration >= .01 && selectedDuration < duration - .01 && time >= selection[0] && time <= selection[1]; setDragStart(time); setMoving(hasMovableSelection); moveOrigin.current = hasMovableSelection ? [...selection] : null; if (!hasMovableSelection) onSelection([time, time]); canvas.current?.setPointerCapture(e.pointerId) }}
+      onPointerMove={e => { if (dragStart === null) return; e.preventDefault(); const time = timeAt(e); if (moving && moveOrigin.current) { const length = moveOrigin.current[1] - moveOrigin.current[0], start = Math.max(0, Math.min(duration - length, moveOrigin.current[0] + time - dragStart)); onSelection([start, start + length]) } else onSelection([Math.min(dragStart, time), Math.max(dragStart, time)]) }}
+      onPointerUp={e => { const time = timeAt(e); if (moving && moveOrigin.current) { const [from, to] = moveOrigin.current; if (Math.abs(selection[0] - from) >= .005) onMoveSelection?.(from, to, selection[0]); else if (Math.abs(time - dragStart!) < .05) onSeek(time) } else if (dragStart !== null && Math.abs(time - dragStart) < .05) onSeek(time); if (canvas.current?.hasPointerCapture(e.pointerId)) canvas.current.releasePointerCapture(e.pointerId); setDragStart(null); setMoving(false); moveOrigin.current = null }}
+      onPointerCancel={() => { setDragStart(null); setMoving(false); moveOrigin.current = null }}/>
+    {dragStart !== null && <div className="drag-selection-tip"><strong>{moving ? '正在移动音频片段' : '正在选择剪切区域'}</strong><span>{selectedDuration.toFixed(3)} 秒</span></div>}
+    {dragStart === null && selectedDuration >= .01 && selectedDuration < duration - .01 && <div className="selection-ready-tip">已选择 {selectedDuration.toFixed(3)} 秒 · 再次按住选区可拖动</div>}
   </div>
 }
