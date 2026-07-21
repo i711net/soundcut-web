@@ -6,5 +6,7 @@ import './mobile.css'
 import './transcript.css'
 import './lyrics.css'
 import './media-track.css'
+import './mixer.css'
+import './dynamic-tracks.css'
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
