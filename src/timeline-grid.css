@@ -31,7 +31,7 @@
 }
 
 .ruler span {
-  flex: 0 0 var(--five-second-step);
+  flex: 0 0 var(--ruler-label-step);
   min-width: 0;
   color: #a8c5ce;
   font-size: 10px;
