@@ -33,6 +33,7 @@ import AudioEffectsPanel from './AudioEffectsPanel'
 import './audio-effects.css'
 import { defaultAudioEffects } from './audio-effects'
 import './speed-pitch.css'
+import './multi-selection.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -61,6 +62,7 @@ export default function App() {
   const [audioClipboard, setAudioClipboard] = useState<AudioBuffer | null>(null)
   const [compactTracks, setCompactTracks] = useState(false)
   const [selectedClipId, setSelectedClipId] = useState('')
+  const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
   const [status, setStatus] = useState('准备就绪')
   const [inspectorTab, setInspectorTab] = useState<'properties' | 'transcript'>('properties')
   const [language, setLanguage] = useState('auto')
@@ -430,6 +432,32 @@ export default function App() {
     else videoElement.current?.pause()
   }
   const selectedClip = trackStore.activeTrack.clips.find(clip => clip.id === selectedClipId)
+  const selectedClips = trackStore.tracks.flatMap(track => track.clips.map(clip => ({ track, clip }))).filter(item => selectedClipIds.includes(item.clip.id))
+  const selectClipSet = (clipId: string, additive: boolean) => {
+    const item = trackStore.tracks.flatMap(track => track.clips).find(clip => clip.id === clipId)
+    if (!item) return
+    if (!additive && item.groupId) { const grouped = trackStore.tracks.flatMap(track => track.clips).filter(clip => clip.groupId === item.groupId).map(clip => clip.id); setSelectedClipIds(grouped); return }
+    setSelectedClipIds(ids => additive ? ids.includes(clipId) ? ids.filter(id => id !== clipId) : [...ids, clipId] : [clipId])
+  }
+  const groupSelectedClips = () => { if (selectedClipIds.length < 2) return setStatus('请先按住 Ctrl 点击至少两个片段'); remember(); const groupId = `group-${Date.now()}`; selectedClips.forEach(({ track, clip }) => trackStore.updateClip(track.id, clip.id, { groupId })); setStatus(`已将 ${selectedClipIds.length} 个片段编为一组`) }
+  const ungroupSelectedClips = () => { if (!selectedClipIds.length) return; remember(); selectedClips.forEach(({ track, clip }) => trackStore.updateClip(track.id, clip.id, { groupId: undefined })); setStatus('所选片段已取消编组') }
+  const deleteSelectedClips = () => { if (!selectedClipIds.length) return; remember(); selectedClips.forEach(({ track, clip }) => trackStore.deleteClip(track.id, clip.id)); setSelectedClipIds([]); setSelectedClipId(''); setStatus(`已删除 ${selectedClipIds.length} 个片段`) }
+  const duplicateSelectedClips = () => { if (!selectedClips.length) return; remember(); const first = Math.min(...selectedClips.map(item => item.clip.start)), trackId = trackStore.addTrack(null, '片段组副本'); selectedClips.forEach(({ clip }) => { const id = trackStore.addClip(trackId, clip.buffer, `${clip.name} · 副本`, clip.start - first); trackStore.updateClip(trackId, id, { ...clip, id, start: clip.start - first, groupId: undefined }) }); setSelectedClipIds([]); setSelectedClipId(''); setStatus(`已把 ${selectedClips.length} 个片段复制到新音轨`) }
+
+  useEffect(() => {
+    const body = timelineBodyRef.current; if (!body) return
+    body.querySelectorAll<HTMLElement>('[data-clip-id]').forEach(element => element.classList.toggle('multi-selected', selectedClipIds.includes(element.dataset.clipId || '')))
+  }, [selectedClipIds, trackStore.tracks])
+
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => {
+      if ((event.target as HTMLElement)?.matches('input,textarea,select')) return
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); const ids = trackStore.activeTrack.clips.map(clip => clip.id); setSelectedClipIds(ids); if (ids[0]) setSelectedClipId(ids[0]); setStatus(`已选择当前音轨 ${ids.length} 个片段`) }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g') { event.preventDefault(); groupSelectedClips() }
+      if (event.key === 'Delete' && selectedClipIds.length > 1) { event.preventDefault(); deleteSelectedClips() }
+    }
+    window.addEventListener('keydown', keyboard); return () => window.removeEventListener('keydown', keyboard)
+  })
   const activeVoicePreset = effectScope === 'clip' ? selectedClip?.voicePreset || 'none' : trackStore.activeTrack.voicePreset
   const activePitchSemitones = effectScope === 'clip' ? selectedClip?.pitchSemitones || 0 : trackStore.activeTrack.pitchSemitones
   useEffect(() => { setPendingVoicePreset(activeVoicePreset) }, [activeVoicePreset, effectScope, selectedClipId, trackStore.activeId])
@@ -517,6 +545,10 @@ export default function App() {
   }
   const pasteAudio = () => { if (!audioClipboard) return; remember(); const trackId = trackStore.activeId, at = currentTimeRef.current; const id = trackStore.addClip(trackId, audioClipboard, '粘贴片段', at); setSelectedClipId(id); setSelection([at, at + audioClipboard.duration]); setStatus('片段已粘贴到播放头位置，不会推挤其他片段') }
   const moveTimelineClip = (clipId: string, start: number, targetTrackId: string) => {
+    if (selectedClipIds.length > 1 && selectedClipIds.includes(clipId)) {
+      const moving = selectedClips, anchor = moving.find(item => item.clip.id === clipId)
+      if (anchor) { const delta = start - anchor.clip.start, earliest = Math.min(...moving.map(item => item.clip.start)), adjustedDelta = Math.max(delta, -earliest), targetTrack = trackStore.tracks.find(track => track.id === targetTrackId); if (!targetTrack) return; const targetRate = targetTrack.playbackRate * targetTrack.clipPlaybackRate, occupied = targetTrack.clips.filter(clip => !selectedClipIds.includes(clip.id)).map(clip => ({ start: clip.start, end: clip.start + clip.duration / (targetRate * clip.playbackRate) })), proposed = moving.map(({ clip }) => ({ start: clip.start + adjustedDelta, end: clip.start + adjustedDelta + clip.duration / (targetRate * clip.playbackRate) })); if (proposed.some(item => occupied.some(other => item.start < other.end - .001 && item.end > other.start + .001))) { setStatus('整组目标位置与其他片段重叠，请换到空白位置'); return } remember(); moving.forEach(({ clip }) => trackStore.moveClipToTrack(clip.id, targetTrackId, clip.start + adjustedDelta)); trackStore.setActiveId(targetTrackId); setStatus(`已整体移动 ${moving.length} 个片段${targetTrackId !== anchor.track.id ? '到目标音轨' : ''}`); return }
+    }
     const sourceTrack = trackStore.tracks.find(track => track.clips.some(clip => clip.id === clipId)), clip = sourceTrack?.clips.find(item => item.id === clipId), targetTrack = trackStore.tracks.find(track => track.id === targetTrackId)
     let finalStart = start, snapped = false
     if (snapEnabled && clip && targetTrack) {
@@ -605,7 +637,8 @@ export default function App() {
         <AudioEditToolbar disabled={!trackStore.activeTrack.clips.length} canPaste={!!audioClipboard} onCut={cutSelection} onCopy={copySelection} onPaste={pasteAudio} onDelete={deleteSelection} onTrim={keepSelection} onSplit={splitAtPlayhead} onDuplicate={duplicateSelectionToTrack} onImport={() => fragmentInput.current?.click()} onMerge={() => void mergeSelectedTracks()} onSilence={() => transformSelection('silence', '静音')} onReverse={() => transformSelection('reverse', '反转')} onNormalize={() => transformSelection('normalize', '标准化')} onFadeIn={() => transformSelection('fadeIn', '淡入')} onFadeOut={() => transformSelection('fadeOut', '淡出')} effectScope={effectScope} voicePreset={pendingVoicePreset} pitchSemitones={activePitchSemitones} onEffectScope={setEffectScope} onVoicePreset={setPendingVoicePreset} onApplyVoice={() => void confirmVoicePreset()} onRestoreVoice={restoreOriginalVoice} onPitchSemitones={changePitchSemitones} onApplyPitch={() => void applyCentralPitch()}/>
         <ChannelEditor disabled={!selectedClip} channels={selectedClip?.buffer.numberOfChannels || 0} leftGain={channelMix.leftGain} rightGain={channelMix.rightGain} pan={channelMix.pan} onLeftGain={leftGain => setChannelMix(value => ({ ...value, leftGain }))} onRightGain={rightGain => setChannelMix(value => ({ ...value, rightGain }))} onPan={pan => setChannelMix(value => ({ ...value, pan }))} onApply={() => applyChannelProcess({}, '左右音量与声像')} onAction={channelAction}/>
         <div className="master-controls"><strong>总控</strong><label>速度<PreciseRange ariaLabel="总速度" min={.5} max={2} step={.05} value={speed} onChange={setSpeed}/><output>{speed.toFixed(2)}×</output></label><label>主音量<PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/><output>{Math.round(masterVolume * 100)}%</output></label><button className={`snap-toggle ${snapEnabled ? 'active' : ''}`} onClick={() => setSnapEnabled(value => !value)}>{snapEnabled ? '磁吸连接：开' : '磁吸连接：关'}</button><label className="snap-gap">片段间隔<PreciseRange ariaLabel="磁吸间隔秒数" min={0} max={5} step={.05} value={snapGap} onChange={setSnapGap}/><output>{snapGap.toFixed(2)}s</output></label><button className="extend-timeline" onClick={() => { setTimelinePadding(value => value + 30); setStatus('时间线已向右延长30秒') }}>延长时间线＋30秒</button><button className={`compact-tracks-toggle ${compactTracks ? 'active' : ''}`} onClick={() => setCompactTracks(value => !value)}>{compactTracks ? '紧凑轨道' : '标准轨道'}</button></div>
-        <div className={`timeline-body ${compactTracks ? 'compact' : ''}`} ref={timelineBodyRef} onWheel={timelineWheel} style={{ '--one-second-step': `${1 / timelineDuration * 100}%`, '--five-second-step': `${5 / timelineDuration * 100}%`, '--timeline-pixel-width': `${timelinePixelWidth}px`, '--playhead-px': `${currentTime * timelineZoom}px` } as React.CSSProperties}>
+        <div className={`timeline-body ${compactTracks ? 'compact' : ''}`} ref={timelineBodyRef} onPointerDownCapture={event => { const clip = (event.target as HTMLElement).closest<HTMLElement>('[data-clip-id]'); if (clip?.dataset.clipId) selectClipSet(clip.dataset.clipId, event.ctrlKey || event.metaKey) }} onWheel={timelineWheel} style={{ '--one-second-step': `${1 / timelineDuration * 100}%`, '--five-second-step': `${5 / timelineDuration * 100}%`, '--timeline-pixel-width': `${timelinePixelWidth}px`, '--playhead-px': `${currentTime * timelineZoom}px` } as React.CSSProperties}>
+        {selectedClipIds.length > 1 && <div className="multi-selection-bar"><strong>{selectedClipIds.length} 个片段</strong><button onClick={groupSelectedClips}>编组</button><button onClick={ungroupSelectedClips}>取消编组</button><button onClick={duplicateSelectedClips}>复制到新轨</button><button className="danger" onClick={deleteSelectedClips}>批量删除</button></div>}
         <div className="ruler draggable-ruler" title="按住并拖动以精确定位播放头" style={{ '--ruler-label-step': `${rulerLabelStep / timelineDuration * 100}%` } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}>{Array.from({length: Math.floor(timelineDuration / rulerLabelStep) + 1}, (_, i) => <span key={i}>{formatTime(i * rulerLabelStep)}</span>)}</div>
         <div className="timeline-playhead" style={{ '--playhead': playheadPercent } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}><span>{formatTime(currentTime, true)}</span></div>
         <div className={`track ${trackStore.tracks[0].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[0]} active={trackStore.activeId === 'track-1'} onActivate={() => trackStore.setActiveId('track-1')} onChange={patch => trackStore.updateTrack('track-1', patch)} onApplyPitch={() => applyPitch('track-1')}/><div className="track-canvas">{trackStore.tracks[0].clips.length ? <><TrackClipLane track={trackStore.tracks[0]} timelineDuration={timelineDuration} tool={timelineTool} selection={selection} onSelection={setSelection} selectedClipId={selectedClipId} onSelect={clip => { trackStore.setActiveId('track-1'); setSelectedClipId(clip.id); setSelection([clip.start, clip.start + clip.duration / (trackStore.tracks[0].playbackRate * trackStore.tracks[0].clipPlaybackRate * clip.playbackRate)]) }} onMove={moveTimelineClip} onTrim={trimTimelineClip} onSeek={seek}/></> : <div className="empty" data-track-id="track-1"><strong>空音轨</strong><span>把片段拖到这里</span></div>}</div></div>

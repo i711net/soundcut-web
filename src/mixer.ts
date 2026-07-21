@@ -2,7 +2,7 @@ import { connectAudioEffects, defaultAudioEffects, type AudioEffectSettings } fr
 
 export type TrackKind = 'main' | 'video' | 'audio'
 export type AutomationPoint = { id: string; time: number; value: number }
-export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; timeStretchRate: number; appliedTimeStretchRate: number; fadeIn: number; fadeOut: number; volumeEnvelope: AutomationPoint[]; effects: AudioEffectSettings; voicePreset: VoicePreset; pitchSemitones: number; originalBuffer?: AudioBuffer; originalOffset?: number; originalDuration?: number }
+export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; timeStretchRate: number; appliedTimeStretchRate: number; fadeIn: number; fadeOut: number; volumeEnvelope: AutomationPoint[]; effects: AudioEffectSettings; voicePreset: VoicePreset; pitchSemitones: number; groupId?: string; originalBuffer?: AudioBuffer; originalOffset?: number; originalDuration?: number }
 
 export type MixerTrack = {
   id: string
