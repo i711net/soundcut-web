@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AudioClip, MixerTrack } from './mixer'
 
-type Props = { track: MixerTrack; timelineDuration: number; currentTime: number; selectedClipId: string; onSelect: (clip: AudioClip) => void; onMove: (clipId: string, start: number) => void; onTrim: (clipId: string, patch: Partial<AudioClip>) => void; onSeek: (time: number) => void }
+type Props = { track: MixerTrack; timelineDuration: number; tool: 'move' | 'select'; selection: [number, number]; selectedClipId: string; onSelect: (clip: AudioClip) => void; onSelection: (range: [number, number]) => void; onMove: (clipId: string, start: number) => void; onTrim: (clipId: string, patch: Partial<AudioClip>) => void; onSeek: (time: number) => void }
 
 function ClipWave({ clip }: { clip: AudioClip }) {
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -19,23 +19,33 @@ function ClipWave({ clip }: { clip: AudioClip }) {
   return <canvas ref={canvas}/>
 }
 
-export default function TrackClipLane({ track, timelineDuration, currentTime, selectedClipId, onSelect, onMove, onTrim, onSeek }: Props) {
+export default function TrackClipLane({ track, timelineDuration, tool, selection, selectedClipId, onSelect, onSelection, onMove, onTrim, onSeek }: Props) {
   const lane = useRef<HTMLDivElement>(null), drag = useRef<{ id: string; pointerX: number; start: number; moved: boolean } | null>(null)
   const trim = useRef<{ id: string; side: 'left' | 'right'; pointerX: number; start: number; offset: number; duration: number } | null>(null)
+  const selecting = useRef<{ start: number; clipStart: number; clipEnd: number } | null>(null)
   const [draft, setDraft] = useState<Record<string, number>>({})
   const rate = track.playbackRate * track.clipPlaybackRate
   const timeAt = (clientX: number) => { const rect = lane.current!.getBoundingClientRect(); return Math.max(0, Math.min(timelineDuration, (clientX - rect.left) / rect.width * timelineDuration)) }
-  return <div className="clip-lane" ref={lane} onDoubleClick={event => onSeek(timeAt(event.clientX))}>
+  const beginSelection = (clientX: number) => {
+    const at = timeAt(clientX), clip = track.clips.find(item => { const length = item.duration / (rate * item.playbackRate); return at >= item.start && at <= item.start + length })
+    if (!clip) return
+    const clipEnd = clip.start + clip.duration / (rate * clip.playbackRate)
+    onSelect(clip); selecting.current = { start: at, clipStart: clip.start, clipEnd }; onSelection([at, at])
+  }
+  return <div className={`clip-lane ${tool === 'select' ? 'select-mode' : 'move-mode'}`} ref={lane} onDoubleClick={event => tool === 'move' && onSeek(timeAt(event.clientX))}
+    onPointerDown={event => { if (tool !== 'select' || event.button !== 0) return; event.preventDefault(); beginSelection(event.clientX); if (selecting.current) event.currentTarget.setPointerCapture(event.pointerId) }}
+    onPointerMove={event => { const state = selecting.current; if (tool !== 'select' || !state) return; const at = Math.max(state.clipStart, Math.min(state.clipEnd, timeAt(event.clientX))); onSelection([Math.min(state.start, at), Math.max(state.start, at)]) }}
+    onPointerUp={() => { selecting.current = null }}>
     {track.clips.map((clip, index) => {
       const start = draft[clip.id] ?? clip.start, length = clip.duration / (rate * clip.playbackRate), selected = selectedClipId === clip.id
       return <div key={clip.id} className={`timeline-clip ${selected ? 'selected' : ''}`} style={{ left: `${start / timelineDuration * 100}%`, width: `${Math.max(.35, length / timelineDuration * 100)}%` }}
-        onPointerDown={event => { if (event.button !== 0) return; event.preventDefault(); onSelect(clip); drag.current = { id: clip.id, pointerX: event.clientX, start: clip.start, moved: false }; event.currentTarget.setPointerCapture(event.pointerId) }}
+        onPointerDown={event => { if (tool === 'select' || event.button !== 0) return; event.preventDefault(); onSelect(clip); drag.current = { id: clip.id, pointerX: event.clientX, start: clip.start, moved: false }; event.currentTarget.setPointerCapture(event.pointerId) }}
         onPointerMove={event => { const state = drag.current; if (!state || state.id !== clip.id) return; const rect = lane.current!.getBoundingClientRect(), delta = (event.clientX - state.pointerX) / rect.width * timelineDuration; if (Math.abs(event.clientX - state.pointerX) > 2) state.moved = true; const next = Math.max(0, Math.min(timelineDuration - length, state.start + delta)); setDraft(value => ({ ...value, [clip.id]: next })) }}
         onPointerUp={event => { const state = drag.current; if (!state || state.id !== clip.id) return; const next = draft[clip.id] ?? clip.start; if (state.moved) onMove(clip.id, next); else onSeek(timeAt(event.clientX)); setDraft(value => { const copy = { ...value }; delete copy[clip.id]; return copy }); drag.current = null }}>
         <div className="clip-title"><b>{index + 1}</b><span>{clip.name}</span><time>{start.toFixed(2)}s</time></div><ClipWave clip={clip}/>
-        {(['left', 'right'] as const).map(side => <i key={side} className={`clip-${side}-edge`} onPointerDown={event => { event.stopPropagation(); onSelect(clip); trim.current = { id: clip.id, side, pointerX: event.clientX, start: clip.start, offset: clip.offset, duration: clip.duration }; event.currentTarget.setPointerCapture(event.pointerId) }} onPointerMove={event => { const state = trim.current; if (!state || state.id !== clip.id || state.side !== side) return; const rect = lane.current!.getBoundingClientRect(), timelineDelta = (event.clientX - state.pointerX) / rect.width * timelineDuration, sourceDelta = timelineDelta * rate * clip.playbackRate; if (side === 'left') { const applied = Math.max(-state.offset, Math.min(state.duration - .02, sourceDelta)); onTrim(clip.id, { start: state.start + applied / (rate * clip.playbackRate), offset: state.offset + applied, duration: state.duration - applied }) } else onTrim(clip.id, { duration: Math.max(.02, Math.min(clip.buffer.duration - state.offset, state.duration + sourceDelta)) }) }} onPointerUp={() => { trim.current = null }}/>) }
+        {tool === 'move' && (['left', 'right'] as const).map(side => <i key={side} className={`clip-${side}-edge`} onPointerDown={event => { event.stopPropagation(); onSelect(clip); trim.current = { id: clip.id, side, pointerX: event.clientX, start: clip.start, offset: clip.offset, duration: clip.duration }; event.currentTarget.setPointerCapture(event.pointerId) }} onPointerMove={event => { const state = trim.current; if (!state || state.id !== clip.id || state.side !== side) return; const rect = lane.current!.getBoundingClientRect(), timelineDelta = (event.clientX - state.pointerX) / rect.width * timelineDuration, sourceDelta = timelineDelta * rate * clip.playbackRate; if (side === 'left') { const applied = Math.max(-state.offset, Math.min(state.duration - .02, sourceDelta)); onTrim(clip.id, { start: state.start + applied / (rate * clip.playbackRate), offset: state.offset + applied, duration: state.duration - applied }) } else onTrim(clip.id, { duration: Math.max(.02, Math.min(clip.buffer.duration - state.offset, state.duration + sourceDelta)) }) }} onPointerUp={() => { trim.current = null }}/>) }
       </div>
     })}
-    <div className="lane-playhead" style={{ left: `${currentTime / timelineDuration * 100}%` }}/>
+    {tool === 'select' && selectedClipId && selection[1] > selection[0] && <div className="lane-selection" style={{ left: `${selection[0] / timelineDuration * 100}%`, width: `${(selection[1] - selection[0]) / timelineDuration * 100}%` }}><span>{(selection[1] - selection[0]).toFixed(3)} 秒</span></div>}
   </div>
 }

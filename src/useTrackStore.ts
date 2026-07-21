@@ -20,6 +20,17 @@ export function useTrackStore() {
   const addClip = useCallback((trackId: string, buffer: AudioBuffer, name: string, start: number) => { const clip = newClip(buffer, name, start); setTracks(items => items.map(track => track.id === trackId ? { ...track, buffer: track.buffer || buffer, originalBuffer: track.originalBuffer || buffer, clips: [...track.clips, clip] } : track)); return clip.id }, [])
   const updateClip = useCallback((trackId: string, clipId: string, patch: Partial<AudioClip>) => setTracks(items => items.map(track => track.id === trackId ? { ...track, clips: track.clips.map(clip => clip.id === clipId ? { ...clip, ...patch } : clip) } : track)), [])
   const deleteClip = useCallback((trackId: string, clipId: string) => setTracks(items => items.map(track => track.id === trackId ? { ...track, clips: track.clips.filter(clip => clip.id !== clipId) } : track)), [])
+  const removeClipRange = useCallback((trackId: string, clipId: string, timelineFrom: number, timelineTo: number) => setTracks(items => items.map(track => {
+    if (track.id !== trackId) return track
+    const target = track.clips.find(clip => clip.id === clipId); if (!target) return track
+    const rate = target.playbackRate * track.playbackRate * track.clipPlaybackRate, clipEnd = target.start + target.duration / rate
+    const from = Math.max(target.start, timelineFrom), to = Math.min(clipEnd, timelineTo); if (to - from < .001) return track
+    const sourceFrom = target.offset + (from - target.start) * rate, sourceTo = target.offset + (to - target.start) * rate
+    const parts: AudioClip[] = []
+    if (sourceFrom - target.offset > .001) parts.push({ ...target, duration: sourceFrom - target.offset })
+    if (target.offset + target.duration - sourceTo > .001) parts.push({ ...target, id: newClip(target.buffer).id, name: `${target.name} · 片段`, start: to, offset: sourceTo, duration: target.offset + target.duration - sourceTo })
+    return { ...track, clips: track.clips.flatMap(clip => clip.id === clipId ? parts : [clip]) }
+  })), [])
   const splitClip = useCallback((trackId: string, clipId: string, timelineTime: number) => setTracks(items => items.map(track => {
     if (track.id !== trackId) return track
     const clip = track.clips.find(item => item.id === clipId); if (!clip) return track
@@ -40,5 +51,5 @@ export function useTrackStore() {
     setActiveId(current => current === id ? 'track-1' : current)
     return next
   }), [])
-  return { tracks, activeId, activeTrack, setActiveId, replaceTracks, updateTrack, setTrackBuffer, setTrackEditedBuffer, setTrackProcessedBuffer, addTrack, addClip, updateClip, deleteClip, splitClip, deleteTrack, extractVideoToMain }
+  return { tracks, activeId, activeTrack, setActiveId, replaceTracks, updateTrack, setTrackBuffer, setTrackEditedBuffer, setTrackProcessedBuffer, addTrack, addClip, updateClip, deleteClip, removeClipRange, splitClip, deleteTrack, extractVideoToMain }
 }
