@@ -19,6 +19,11 @@ export function useTrackStore() {
   }, [])
   const addClip = useCallback((trackId: string, buffer: AudioBuffer, name: string, start: number) => { const clip = newClip(buffer, name, start); setTracks(items => items.map(track => track.id === trackId ? { ...track, buffer: track.buffer || buffer, originalBuffer: track.originalBuffer || buffer, clips: [...track.clips, clip] } : track)); return clip.id }, [])
   const updateClip = useCallback((trackId: string, clipId: string, patch: Partial<AudioClip>) => setTracks(items => items.map(track => track.id === trackId ? { ...track, clips: track.clips.map(clip => clip.id === clipId ? { ...clip, ...patch } : clip) } : track)), [])
+  const moveClipToTrack = useCallback((clipId: string, targetTrackId: string, start: number) => setTracks(items => {
+    const source = items.find(track => track.clips.some(clip => clip.id === clipId)), clip = source?.clips.find(item => item.id === clipId)
+    if (!source || !clip) return items
+    return items.map(track => track.id === source.id && source.id !== targetTrackId ? { ...track, clips: track.clips.filter(item => item.id !== clipId) } : track.id === targetTrackId ? { ...track, buffer: track.buffer || clip.buffer, originalBuffer: track.originalBuffer || clip.buffer, clips: track.clips.some(item => item.id === clipId) ? track.clips.map(item => item.id === clipId ? { ...item, start } : item) : [...track.clips, { ...clip, start }] } : track)
+  }), [])
   const deleteClip = useCallback((trackId: string, clipId: string) => setTracks(items => items.map(track => track.id === trackId ? { ...track, clips: track.clips.filter(clip => clip.id !== clipId) } : track)), [])
   const removeClipRange = useCallback((trackId: string, clipId: string, timelineFrom: number, timelineTo: number) => setTracks(items => items.map(track => {
     if (track.id !== trackId) return track
@@ -64,5 +69,5 @@ export function useTrackStore() {
     setActiveId(current => current === id ? 'track-1' : current)
     return next
   }), [])
-  return { tracks, activeId, activeTrack, setActiveId, replaceTracks, updateTrack, setTrackBuffer, setTrackEditedBuffer, setTrackProcessedBuffer, addTrack, addClip, updateClip, deleteClip, removeClipRange, splitClip, splitClipRange, deleteTrack, extractVideoToMain }
+  return { tracks, activeId, activeTrack, setActiveId, replaceTracks, updateTrack, setTrackBuffer, setTrackEditedBuffer, setTrackProcessedBuffer, addTrack, addClip, updateClip, moveClipToTrack, deleteClip, removeClipRange, splitClip, splitClipRange, deleteTrack, extractVideoToMain }
 }
