@@ -28,6 +28,7 @@ import './timeline-zoom.css'
 import './fade-visuals.css'
 import LevelMeters from './LevelMeters'
 import './level-meters.css'
+import './volume-envelope.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -365,6 +366,14 @@ export default function App() {
       trackStore.updateClip(track.id, selectedClip.id, { fadeOut: duration }); trackStore.updateClip(track.id, next.id, { start: Math.max(0, selectedEnd - duration), fadeIn: duration }); setStatus(`已与后一个片段建立 ${duration.toFixed(2)} 秒交叉淡化`)
     }
   }
+  const addVolumeKeyframe = () => {
+    if (!selectedClip) return
+    const trackRateValue = trackStore.activeTrack.playbackRate * trackStore.activeTrack.clipPlaybackRate * selectedClip.playbackRate, length = selectedClip.duration / trackRateValue
+    const time = Math.max(0, Math.min(length, currentTimeRef.current - selectedClip.start)), point = { id: `key-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, time, value: 1 }
+    remember(); trackStore.updateClip(trackStore.activeId, selectedClip.id, { volumeEnvelope: [...(selectedClip.volumeEnvelope || []), point].sort((a, b) => a.time - b.time) }); setStatus(`已在片段 ${time.toFixed(2)} 秒处添加音量关键帧`)
+  }
+  const updateVolumeKeyframe = (pointId: string, patch: Partial<{ time: number; value: number }>) => { if (!selectedClip) return; const length = selectedClip.duration / (trackStore.activeTrack.playbackRate * trackStore.activeTrack.clipPlaybackRate * selectedClip.playbackRate); trackStore.updateClip(trackStore.activeId, selectedClip.id, { volumeEnvelope: (selectedClip.volumeEnvelope || []).map(point => point.id === pointId ? { ...point, ...patch, time: Math.max(0, Math.min(length, patch.time ?? point.time)), value: Math.max(0, Math.min(2, patch.value ?? point.value)) } : point).sort((a, b) => a.time - b.time) }) }
+  const deleteVolumeKeyframe = (pointId: string) => { if (!selectedClip) return; remember(); trackStore.updateClip(trackStore.activeId, selectedClip.id, { volumeEnvelope: (selectedClip.volumeEnvelope || []).filter(point => point.id !== pointId) }); setStatus('音量关键帧已删除') }
   const separateActiveTrack = () => {
     const track = trackStore.activeTrack
     if (!track.buffer) { setStatus('请先选择含音频的轨道'); return }
@@ -616,7 +625,7 @@ export default function App() {
         </div>
         {inspectorTab === 'properties' ? <div className="properties-panel">
           <label>音频名称<input value={fileName} onChange={e => setFileName(e.target.value)}/></label>
-          {selectedClip && <div className="clip-inspector"><strong>当前片段独立属性</strong><span>{selectedClip.name}</span><ClipControls clip={selectedClip} onChange={patch => trackStore.updateClip(trackStore.activeId, selectedClip.id, patch)} onApplyPitch={() => void applySelectedClipPitch()} pitchWorking={pitchWorkingId === `${trackStore.activeId}:${selectedClip.id}`}/><div className="crossfade-controls"><label>交叉淡化时长<input type="number" min="0.05" max="30" step="0.05" value={crossfadeDuration} onChange={event => setCrossfadeDuration(Math.max(.05, Number(event.target.value) || .05))}/><span>秒</span></label><button onClick={createCrossfade}>创建交叉淡化</button></div></div>}
+          {selectedClip && <div className="clip-inspector"><strong>当前片段独立属性</strong><span>{selectedClip.name}</span><ClipControls clip={selectedClip} onChange={patch => trackStore.updateClip(trackStore.activeId, selectedClip.id, patch)} onApplyPitch={() => void applySelectedClipPitch()} pitchWorking={pitchWorkingId === `${trackStore.activeId}:${selectedClip.id}`}/><div className="envelope-controls"><div><b>音量包络线</b><span>{(selectedClip.volumeEnvelope || []).length} 个关键帧</span></div><div className="envelope-actions"><button onClick={addVolumeKeyframe}>在播放头添加</button><button disabled={!(selectedClip.volumeEnvelope || []).length} onClick={() => { remember(); trackStore.updateClip(trackStore.activeId, selectedClip.id, { volumeEnvelope: [] }); setStatus('当前片段音量包络线已清除') }}>清除全部</button></div>{(selectedClip.volumeEnvelope || []).map((point, index) => <div className="keyframe-row" key={point.id}><i>{index + 1}</i><label>时间<input type="number" min="0" step="0.01" value={point.time.toFixed(2)} onChange={event => updateVolumeKeyframe(point.id, { time: Number(event.target.value) })}/></label><label>音量<input type="number" min="0" max="200" step="1" value={Math.round(point.value * 100)} onChange={event => updateVolumeKeyframe(point.id, { value: Number(event.target.value) / 100 })}/></label><button aria-label="删除关键帧" onClick={() => deleteVolumeKeyframe(point.id)}>×</button></div>)}</div><div className="crossfade-controls"><label>交叉淡化时长<input type="number" min="0.05" max="30" step="0.05" value={crossfadeDuration} onChange={event => setCrossfadeDuration(Math.max(.05, Number(event.target.value) || .05))}/><span>秒</span></label><button onClick={createCrossfade}>创建交叉淡化</button></div></div>}
           <div className="info-row"><span>时长</span><b>{formatTime(buffer?.duration ?? 0, true)}</b></div><hr/>
           <div className="stem-separation"><div><strong>人声 / 伴奏分离</strong><span>本地快速立体声分离</span></div><button onClick={separateActiveTrack} disabled={!trackStore.activeTrack.buffer}><UserRound/><AudioLines/>生成两条轨道</button></div><hr/>
           <label>总控音量 <output>{Math.round(masterVolume * 100)}%</output><PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/></label>

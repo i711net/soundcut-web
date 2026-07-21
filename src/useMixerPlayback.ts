@@ -11,6 +11,7 @@ const analyserPair = (context: AudioContext, source: AudioNode) => {
   source.connect(splitter); splitter.connect(left, 0); splitter.connect(right, 1); return { left, right }
 }
 const analyserPeak = (analyser: AnalyserNode) => { const data = new Float32Array(analyser.fftSize); analyser.getFloatTimeDomainData(data); let peak = 0; for (const value of data) peak = Math.max(peak, Math.abs(value)); return peak }
+const envelopeValue = (points: MixerTrack['clips'][number]['volumeEnvelope'], time: number) => { const sorted = [...(points || [])].sort((a, b) => a.time - b.time); if (!sorted.length) return 1; const next = sorted.find(point => point.time >= time), previous = [...sorted].reverse().find(point => point.time <= time); if (!previous) return next ? 1 + (next.value - 1) * time / Math.max(.0001, next.time) : 1; if (!next || next.id === previous.id) return previous.value; const amount = (time - previous.time) / Math.max(.0001, next.time - previous.time); return previous.value + (next.value - previous.value) * amount }
 
 export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, masterVolume: number, onTime: (time: number) => void) {
   const context = useRef<AudioContext | null>(null)
@@ -48,15 +49,17 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
         if (offset.current >= clipEnd) continue
         const delay = Math.max(0, clip.start - offset.current), elapsed = Math.max(0, offset.current - clip.start), bufferOffset = clip.offset + elapsed * rate
         if (bufferOffset >= clip.offset + clip.duration) continue
-        const node = audioContext.createBufferSource(), gain = audioContext.createGain(), key = `${track.id}:${clip.id}`
+        const node = audioContext.createBufferSource(), gain = audioContext.createGain(), fadeGain = audioContext.createGain(), key = `${track.id}:${clip.id}`
         const level = track.volume * track.clipVolume * clip.volume * masterVolume, startAt = audioContext.currentTime + delay, clipLength = clip.duration / rate
         node.buffer = clip.buffer; node.playbackRate.value = rate
-        const fadeInLevel = clip.fadeIn > 0 && elapsed < clip.fadeIn ? level * elapsed / clip.fadeIn : level
-        gain.gain.setValueAtTime(fadeInLevel, startAt)
-        if (clip.fadeIn > elapsed) gain.gain.linearRampToValueAtTime(level, startAt + clip.fadeIn - elapsed)
+        gain.gain.setValueAtTime(level * envelopeValue(clip.volumeEnvelope, elapsed), startAt)
+        for (const point of [...(clip.volumeEnvelope || [])].sort((a, b) => a.time - b.time)) if (point.time > elapsed) gain.gain.linearRampToValueAtTime(level * point.value, startAt + point.time - elapsed)
+        const fadeInLevel = clip.fadeIn > 0 && elapsed < clip.fadeIn ? elapsed / clip.fadeIn : 1
+        fadeGain.gain.setValueAtTime(fadeInLevel, startAt)
+        if (clip.fadeIn > elapsed) fadeGain.gain.linearRampToValueAtTime(1, startAt + clip.fadeIn - elapsed)
         const fadeOutStart = Math.max(0, clipLength - clip.fadeOut)
-        if (clip.fadeOut > 0) { const untilFade = Math.max(0, fadeOutStart - elapsed); gain.gain.setValueAtTime(elapsed >= fadeOutStart ? level * Math.max(0, (clipLength - elapsed) / clip.fadeOut) : level, startAt + untilFade); gain.gain.linearRampToValueAtTime(0, startAt + Math.max(0, clipLength - elapsed)) }
-        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(bus); node.start(startAt, bufferOffset, clip.offset + clip.duration - bufferOffset)
+        if (clip.fadeOut > 0) { const untilFade = Math.max(0, fadeOutStart - elapsed); fadeGain.gain.setValueAtTime(elapsed >= fadeOutStart ? Math.max(0, (clipLength - elapsed) / clip.fadeOut) : 1, startAt + untilFade); fadeGain.gain.linearRampToValueAtTime(0, startAt + Math.max(0, clipLength - elapsed)) }
+        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(fadeGain).connect(bus); node.start(startAt, bufferOffset, clip.offset + clip.duration - bufferOffset)
         node.onended = () => nodes.current.delete(key); nodes.current.set(key, node); gains.current.set(key, gain)
       }
     }
@@ -78,7 +81,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     for (const track of tracks) {
       for (const clip of track.clips) {
         const key = `${track.id}:${clip.id}`, gain = gains.current.get(key)
-        if (gain) gain.gain.setTargetAtTime(audible.has(track.id) ? track.volume * track.clipVolume * clip.volume * masterVolume : 0, gain.context.currentTime, .01)
+        if (gain && !(clip.volumeEnvelope || []).length) gain.gain.setTargetAtTime(audible.has(track.id) ? track.volume * track.clipVolume * clip.volume * masterVolume : 0, gain.context.currentTime, .01)
         const node = nodes.current.get(key)
         if (node) node.playbackRate.setTargetAtTime(trackRate(track, masterRate) * clip.playbackRate, node.context.currentTime, .01)
       }
@@ -86,7 +89,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   }, [masterRate, masterVolume, tracks])
 
   useEffect(() => {
-    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clips.map(clip => `${clip.id}:${clip.voicePreset}:${clip.start}:${clip.offset}:${clip.duration}:${clip.fadeIn}:${clip.fadeOut}`).join(',')}`).join('|')
+    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clips.map(clip => `${clip.id}:${clip.voicePreset}:${clip.start}:${clip.offset}:${clip.duration}:${clip.fadeIn}:${clip.fadeOut}:${JSON.stringify(clip.volumeEnvelope || [])}`).join(',')}`).join('|')
     const changed = effectSignature.current !== '' && effectSignature.current !== signature
     effectSignature.current = signature
     if (!changed || !playing || !context.current) return

@@ -80,7 +80,7 @@ export function deserializeProject(project: StoredProject): { tracks: MixerTrack
         const { bufferId: clipBufferId, originalBufferId: originalClipBufferId, ...clipSettings } = storedClip
         const buffer = buffers.get(clipBufferId)
         if (!buffer) throw new Error('工程音频数据不完整')
-        return { ...clipSettings, buffer, originalBuffer: originalClipBufferId ? buffers.get(originalClipBufferId) : undefined }
+        return { ...clipSettings, volumeEnvelope: clipSettings.volumeEnvelope || [], buffer, originalBuffer: originalClipBufferId ? buffers.get(originalClipBufferId) : undefined }
       }),
     } satisfies MixerTrack
   })
