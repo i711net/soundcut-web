@@ -58,7 +58,10 @@ export async function mixTracks(tracks: MixerTrack[], selectedOnly = true, maste
     for (const clip of clips) {
       const node = context.createBufferSource(), gain = context.createGain(), rate = trackRate(track, masterRate) * clip.playbackRate
       node.buffer = clip.buffer; node.playbackRate.value = rate
-      gain.gain.value = track.muted ? 0 : track.volume * track.clipVolume * clip.volume * masterVolume
+      const level = track.muted ? 0 : track.volume * track.clipVolume * clip.volume * masterVolume, clipLength = clip.duration / rate
+      gain.gain.setValueAtTime(clip.fadeIn > 0 ? 0 : level, clip.start)
+      if (clip.fadeIn > 0) gain.gain.linearRampToValueAtTime(level, clip.start + Math.min(clip.fadeIn, clipLength))
+      if (clip.fadeOut > 0) { gain.gain.setValueAtTime(level, Math.max(clip.start, clip.start + clipLength - clip.fadeOut)); gain.gain.linearRampToValueAtTime(0, clip.start + clipLength) }
       connectVoiceEffects(context, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(context.destination); node.start(clip.start, clip.offset, clip.duration)
     }
   }

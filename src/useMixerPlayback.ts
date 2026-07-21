@@ -33,8 +33,14 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
         const delay = Math.max(0, clip.start - offset.current), elapsed = Math.max(0, offset.current - clip.start), bufferOffset = clip.offset + elapsed * rate
         if (bufferOffset >= clip.offset + clip.duration) continue
         const node = audioContext.createBufferSource(), gain = audioContext.createGain(), key = `${track.id}:${clip.id}`
-        node.buffer = clip.buffer; node.playbackRate.value = rate; gain.gain.value = track.volume * track.clipVolume * clip.volume * masterVolume
-        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(audioContext.destination); node.start(audioContext.currentTime + delay, bufferOffset, clip.offset + clip.duration - bufferOffset)
+        const level = track.volume * track.clipVolume * clip.volume * masterVolume, startAt = audioContext.currentTime + delay, clipLength = clip.duration / rate
+        node.buffer = clip.buffer; node.playbackRate.value = rate
+        const fadeInLevel = clip.fadeIn > 0 && elapsed < clip.fadeIn ? level * elapsed / clip.fadeIn : level
+        gain.gain.setValueAtTime(fadeInLevel, startAt)
+        if (clip.fadeIn > elapsed) gain.gain.linearRampToValueAtTime(level, startAt + clip.fadeIn - elapsed)
+        const fadeOutStart = Math.max(0, clipLength - clip.fadeOut)
+        if (clip.fadeOut > 0) { const untilFade = Math.max(0, fadeOutStart - elapsed); gain.gain.setValueAtTime(elapsed >= fadeOutStart ? level * Math.max(0, (clipLength - elapsed) / clip.fadeOut) : level, startAt + untilFade); gain.gain.linearRampToValueAtTime(0, startAt + Math.max(0, clipLength - elapsed)) }
+        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(audioContext.destination); node.start(startAt, bufferOffset, clip.offset + clip.duration - bufferOffset)
         node.onended = () => nodes.current.delete(key); nodes.current.set(key, node); gains.current.set(key, gain)
       }
     }
@@ -60,7 +66,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   }, [masterRate, masterVolume, tracks])
 
   useEffect(() => {
-    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clips.map(clip => `${clip.id}:${clip.voicePreset}`).join(',')}`).join('|')
+    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clips.map(clip => `${clip.id}:${clip.voicePreset}:${clip.start}:${clip.offset}:${clip.duration}:${clip.fadeIn}:${clip.fadeOut}`).join(',')}`).join('|')
     const changed = effectSignature.current !== '' && effectSignature.current !== signature
     effectSignature.current = signature
     if (!changed || !playing || !context.current) return

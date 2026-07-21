@@ -333,6 +333,19 @@ export default function App() {
     } catch { setStatus('歌曲变调失败，请尝试 WAV 文件或较短的片段') }
     finally { setPitchWorkingId('') }
   }
+  const applySelectedClipPitch = async () => {
+    if (!selectedClip || pitchWorkingId) return
+    const trackId = trackStore.activeId, workingKey = `${trackId}:${selectedClip.id}`
+    try {
+      setPitchWorkingId(workingKey); mixerPlayback.stop(); setStatus(selectedClip.pitchSemitones ? `正在给当前片段应用 ${selectedClip.pitchSemitones > 0 ? '+' : ''}${selectedClip.pitchSemitones} 半音…` : '正在恢复当前片段原音高…')
+      const original = selectedClip.originalBuffer || renderBuffer(selectedClip.buffer, { start: selectedClip.offset, end: selectedClip.offset + selectedClip.duration, gain: 1, fadeIn: 0, fadeOut: 0 })
+      const processed = selectedClip.pitchSemitones ? await pitchShiftWav(bufferToWav(original), selectedClip.pitchSemitones, original.sampleRate) : bufferToWav(original)
+      const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
+      const decoded = await ctx.decodeAudioData(await processed.arrayBuffer())
+      trackStore.updateClip(trackId, selectedClip.id, { buffer: decoded, offset: 0, duration: decoded.duration, originalBuffer: original })
+      setStatus(selectedClip.pitchSemitones ? '当前片段音高已应用，其他片段不受影响' : '当前片段已恢复原音高')
+    } catch { setStatus('当前片段音高处理失败，请尝试较短的 WAV 片段') } finally { setPitchWorkingId('') }
+  }
   const separateActiveTrack = () => {
     const track = trackStore.activeTrack
     if (!track.buffer) { setStatus('请先选择含音频的轨道'); return }
@@ -583,7 +596,7 @@ export default function App() {
         </div>
         {inspectorTab === 'properties' ? <div className="properties-panel">
           <label>音频名称<input value={fileName} onChange={e => setFileName(e.target.value)}/></label>
-          {selectedClip && <div className="clip-inspector"><strong>当前片段参数</strong><span>{selectedClip.name}</span><ClipControls track={trackStore.activeTrack} onChange={patch => trackStore.updateTrack(trackStore.activeId, patch)}/></div>}
+          {selectedClip && <div className="clip-inspector"><strong>当前片段独立属性</strong><span>{selectedClip.name}</span><ClipControls clip={selectedClip} onChange={patch => trackStore.updateClip(trackStore.activeId, selectedClip.id, patch)} onApplyPitch={() => void applySelectedClipPitch()} pitchWorking={pitchWorkingId === `${trackStore.activeId}:${selectedClip.id}`}/></div>}
           <div className="info-row"><span>时长</span><b>{formatTime(buffer?.duration ?? 0, true)}</b></div><hr/>
           <div className="stem-separation"><div><strong>人声 / 伴奏分离</strong><span>本地快速立体声分离</span></div><button onClick={separateActiveTrack} disabled={!trackStore.activeTrack.buffer}><UserRound/><AudioLines/>生成两条轨道</button></div><hr/>
           <label>总控音量 <output>{Math.round(masterVolume * 100)}%</output><PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/></label>
