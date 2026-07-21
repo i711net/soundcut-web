@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 
-type Props = { buffer: AudioBuffer; selection: [number, number]; currentTime: number; onSelection: (value: [number, number]) => void; onSeek: (value: number) => void }
+export type WaveformMark = { id: string; start: number; end: number; label: string; kind: 'split' | 'copy' | 'paste' | 'cut' | 'clip' }
+type Props = { buffer: AudioBuffer; selection: [number, number]; currentTime: number; marks?: WaveformMark[]; onSelection: (value: [number, number]) => void; onSeek: (value: number) => void }
 
-export default function Waveform({ buffer, selection, currentTime, onSelection, onSeek }: Props) {
+export default function Waveform({ buffer, selection, currentTime, marks = [], onSelection, onSeek }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const [dragStart, setDragStart] = useState<number | null>(null)
   const duration = buffer.duration
@@ -28,10 +29,19 @@ export default function Waveform({ buffer, selection, currentTime, onSelection, 
       ctx.moveTo(x, h / 2 + min * amp); ctx.lineTo(x, h / 2 + max * amp)
     }
     ctx.stroke()
+    const colors = { split: '#ffb45f', copy: '#78b7ff', paste: '#a88cff', cut: '#ff705a', clip: '#65dfad' }
+    marks.forEach((mark, index) => {
+      const startX = Math.max(0, Math.min(w, mark.start / duration * w)), endX = Math.max(startX, Math.min(w, mark.end / duration * w)), color = colors[mark.kind]
+      if (endX - startX > 2) { ctx.globalAlpha = .13; ctx.fillStyle = color; ctx.fillRect(startX, 0, endX - startX, h); ctx.globalAlpha = 1 }
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash(mark.kind === 'copy' ? [5, 4] : [])
+      ctx.beginPath(); ctx.moveTo(startX, 0); ctx.lineTo(startX, h); if (endX - startX > 2) { ctx.moveTo(endX, 0); ctx.lineTo(endX, h) } ctx.stroke(); ctx.setLineDash([])
+      const text = `${index + 1} · ${mark.label}`, textWidth = Math.min(110, Math.max(45, ctx.measureText(text).width + 10))
+      ctx.fillStyle = color; ctx.fillRect(Math.min(w - textWidth, startX + 3), h - 20, textWidth, 16); ctx.fillStyle = '#071018'; ctx.font = '600 9px sans-serif'; ctx.fillText(text, Math.min(w - textWidth, startX + 3) + 5, h - 9)
+    })
     ctx.strokeStyle = '#ff705a'; ctx.lineWidth = 2; const playX = currentTime / duration * w
     ctx.beginPath(); ctx.moveTo(playX, 0); ctx.lineTo(playX, h); ctx.stroke()
     ctx.fillStyle = '#dff'; [a, b].forEach(x => { ctx.fillRect(x - 2, 0, 4, h); ctx.beginPath(); ctx.arc(x, h / 2, 7, 0, Math.PI * 2); ctx.fill() })
-  }, [buffer, selection, currentTime, duration])
+  }, [buffer, selection, currentTime, duration, marks])
 
   const timeAt = (event: React.PointerEvent) => {
     const rect = canvas.current!.getBoundingClientRect()
