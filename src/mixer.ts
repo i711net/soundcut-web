@@ -1,5 +1,5 @@
 export type TrackKind = 'main' | 'video' | 'audio'
-export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; fadeIn: number; fadeOut: number; voicePreset: VoicePreset; pitchSemitones: number }
+export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; fadeIn: number; fadeOut: number; voicePreset: VoicePreset; pitchSemitones: number; originalBuffer?: AudioBuffer; originalOffset?: number; originalDuration?: number }
 
 export type MixerTrack = {
   id: string

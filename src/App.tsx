@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText, Video, Plus, CopyPlus, Headphones, Square, MonitorUp, UserRound, AudioLines } from 'lucide-react'
-import { bufferToWav, formatTime, renderBuffer, separateStereo, transformRange, type EditSettings } from './audio'
+import { bufferToWav, extractChannel, formatTime, processChannels, renderBuffer, separateStereo, transformRange, type ChannelProcessOptions, type EditSettings } from './audio'
 import TranscriptPanel from './TranscriptPanel'
 import { mergeTranscriptSegments, parseVtt, type TranscriptSegment } from './transcript'
 import { convertWav, extractAudioFromVideo, pitchShiftWav, type AudioExportFormat } from './media'
@@ -18,6 +18,8 @@ import './draggable-playhead.css'
 import './timeline-grid.css'
 import './timeline-alignment.css'
 import { presetPitch, type VoicePreset } from './voice-effects'
+import ChannelEditor from './ChannelEditor'
+import './channel-editor.css'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
 
@@ -29,6 +31,7 @@ export default function App() {
   const [timelineTool, setTimelineTool] = useState<'move' | 'select'>('move')
   const [effectScope, setEffectScope] = useState<'clip' | 'track'>('clip')
   const [pendingVoicePreset, setPendingVoicePreset] = useState<VoicePreset>('none')
+  const [channelMix, setChannelMix] = useState({ leftGain: 1, rightGain: 1, pan: 0 })
   const [currentTime, setCurrentTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [settings, setSettings] = useState<EditSettings>({ start: 0, end: 0, gain: 1, fadeIn: 0, fadeOut: 0 })
@@ -295,10 +298,29 @@ export default function App() {
   const activeVoicePreset = effectScope === 'clip' ? selectedClip?.voicePreset || 'none' : trackStore.activeTrack.voicePreset
   const activePitchSemitones = effectScope === 'clip' ? selectedClip?.pitchSemitones || 0 : trackStore.activeTrack.pitchSemitones
   useEffect(() => { setPendingVoicePreset(activeVoicePreset) }, [activeVoicePreset, effectScope, selectedClipId, trackStore.activeId])
-  const changeVoicePreset = (preset: VoicePreset) => {
-    if (effectScope === 'clip') { if (!selectedClip) return setStatus('请先选择一个音频片段'); trackStore.updateClip(trackStore.activeId, selectedClip.id, { voicePreset: preset, pitchSemitones: presetPitch[preset] }) }
-    else trackStore.updateTrack(trackStore.activeId, { voicePreset: preset, pitchSemitones: presetPitch[preset] })
-    setStatus(`已为${effectScope === 'clip' ? '当前片段' : '当前音轨'}保存变声设置`)
+  const confirmVoicePreset = async () => {
+    const preset = pendingVoicePreset, semitones = presetPitch[preset], clips = effectScope === 'clip' ? selectedClip ? [selectedClip] : [] : trackStore.activeTrack.clips
+    if (!clips.length || pitchWorkingId) return setStatus('请先选择需要变声的音频片段或音轨')
+    try {
+      remember(); mixerPlayback.stop(); setPitchWorkingId(`voice-${trackStore.activeId}`); setStatus(`正在生成${effectScope === 'clip' ? '当前片段' : '整条音轨'}变声…`)
+      const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
+      for (const clip of clips) {
+        const originalBuffer = clip.originalBuffer || clip.buffer, originalOffset = clip.originalOffset ?? clip.offset, originalDuration = clip.originalDuration ?? clip.duration
+        const sourceClip = renderBuffer(originalBuffer, { start: originalOffset, end: originalOffset + originalDuration, gain: 1, fadeIn: 0, fadeOut: 0 })
+        const processed = semitones ? await ctx.decodeAudioData(await (await pitchShiftWav(bufferToWav(sourceClip), semitones, sourceClip.sampleRate)).arrayBuffer()) : sourceClip
+        trackStore.updateClip(trackStore.activeId, clip.id, { buffer: processed, offset: 0, duration: processed.duration, voicePreset: effectScope === 'clip' ? preset : 'none', pitchSemitones: semitones, originalBuffer, originalOffset, originalDuration })
+      }
+      if (effectScope === 'track') trackStore.updateTrack(trackStore.activeId, { voicePreset: preset, pitchSemitones: semitones })
+      setStatus(`${effectScope === 'clip' ? '当前片段' : '整条音轨'}变声已生成，可点击播放试听`)
+    } catch { setStatus('变声生成失败，请尝试较短的音频片段') } finally { setPitchWorkingId('') }
+  }
+  const restoreOriginalVoice = () => {
+    const clips = effectScope === 'clip' ? selectedClip ? [selectedClip] : [] : trackStore.activeTrack.clips
+    if (!clips.length) return setStatus('请先选择需要恢复的片段或音轨')
+    remember(); mixerPlayback.stop()
+    for (const clip of clips) trackStore.updateClip(trackStore.activeId, clip.id, { buffer: clip.originalBuffer || clip.buffer, offset: clip.originalOffset ?? clip.offset, duration: clip.originalDuration ?? clip.duration, voicePreset: 'none', pitchSemitones: 0 })
+    if (effectScope === 'track') trackStore.updateTrack(trackStore.activeId, { voicePreset: 'none', pitchSemitones: 0 })
+    setPendingVoicePreset('none'); setStatus(`已将${effectScope === 'clip' ? '当前片段' : '整条音轨'}恢复为原声`)
   }
   const changePitchSemitones = (value: number) => {
     if (effectScope === 'clip') { if (!selectedClip) return setStatus('请先选择一个音频片段'); trackStore.updateClip(trackStore.activeId, selectedClip.id, { pitchSemitones: value }) }
@@ -326,6 +348,18 @@ export default function App() {
     return { timelineFrom: from, timelineTo: to, sourceFrom: selectedClip.offset + (from - selectedClip.start) * rate, sourceTo: selectedClip.offset + (to - selectedClip.start) * rate }
   }
   const remember = () => { setHistory(h => [...h.slice(-29), { tracks: trackStore.tracks, activeId: trackStore.activeId, selection }]); setFuture([]) }
+  const selectedVisibleBuffer = () => selectedClip ? renderBuffer(selectedClip.buffer, { start: selectedClip.offset, end: selectedClip.offset + selectedClip.duration, gain: 1, fadeIn: 0, fadeOut: 0 }) : null
+  const applyChannelProcess = (options: Partial<ChannelProcessOptions>, label: string) => {
+    const source = selectedVisibleBuffer(); if (!selectedClip || !source) return setStatus('请先选择需要编辑声道的音频片段')
+    remember(); mixerPlayback.stop(); const processed = processChannels(source, { leftGain: channelMix.leftGain, rightGain: channelMix.rightGain, pan: channelMix.pan, ...options })
+    trackStore.updateClip(trackStore.activeId, selectedClip.id, { buffer: processed, offset: 0, duration: processed.duration }); setStatus(`已应用声道处理：${label}`)
+  }
+  const channelAction = (action: 'swap' | 'muteLeft' | 'muteRight' | 'invertLeft' | 'invertRight' | 'mono' | 'stereo' | 'extractLeft' | 'extractRight') => {
+    const source = selectedVisibleBuffer(); if (!selectedClip || !source) return setStatus('请先选择需要编辑声道的音频片段')
+    if (action === 'extractLeft' || action === 'extractRight') { remember(); const side = action === 'extractLeft' ? 0 : 1, extracted = extractChannel(source, side); trackStore.addTrack(extracted, `${selectedClip.name} · ${side ? '右' : '左'}声道`); setStatus(`${side ? '右' : '左'}声道已提取为新的独立音轨`); return }
+    const map: Record<Exclude<typeof action, 'extractLeft' | 'extractRight'>, [Partial<ChannelProcessOptions>, string]> = { swap: [{ swap: true }, '交换左右声道'], muteLeft: [{ muteLeft: true }, '静音左声道'], muteRight: [{ muteRight: true }, '静音右声道'], invertLeft: [{ invertLeft: true }, '左声道相位反转'], invertRight: [{ invertRight: true }, '右声道相位反转'], mono: [{ mono: true }, '立体声转单声道'], stereo: [{ forceStereo: true }, '复制成立体声'] }
+    const [options, label] = map[action]; applyChannelProcess(options, label)
+  }
   const keepSelection = () => { const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间'); remember(); trackStore.updateClip(trackStore.activeId, selectedClip.id, { start: range.timelineFrom, offset: range.sourceFrom, duration: range.sourceTo - range.sourceFrom }); setSelection([range.timelineFrom, range.timelineTo]); setStatus('已只保留选区，其他轨道位置保持不变') }
   const deleteSelection = () => { const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间'); remember(); trackStore.removeClipRange(trackStore.activeId, selectedClip.id, range.timelineFrom, range.timelineTo); setSelectedClipId(''); setSelection([0, 0]); setStatus('已删除选区，左右片段清楚分开，其他轨道位置不变') }
   const copySelection = () => { const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间'); const copied = renderBuffer(selectedClip.buffer, { start: range.sourceFrom, end: range.sourceTo, gain: 1, fadeIn: 0, fadeOut: 0 }); setAudioClipboard(copied); setStatus(`已复制选区：${formatTime(range.timelineTo - range.timelineFrom, true)}`) }
@@ -406,7 +440,8 @@ export default function App() {
     <main>
       <aside className="tools"><button className="import" onClick={() => requestImport('main')}><Upload/>导入媒体</button><input ref={input} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void loadFile(file) }}/><input ref={fragmentInput} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void openMediaToClipboard(file) }}/><div className="screen-record-config"><button className={`tool ${screenRecording ? 'recording' : ''}`} onClick={screenStage === 'recording' ? stopScreenRecording : screenStage === 'idle' || screenStage === 'error' ? prepareScreenRecording : () => undefined}><MonitorUp/><span>{screenStage === 'selecting' ? '选择录制来源…' : screenStage === 'ready' ? '预录制已就绪' : screenStage === 'recording' ? `录制中 ${formatTime(screenRecordingSeconds)}` : screenStage === 'finished' ? '录制已完成' : '录制屏幕'}</span></button><select value={captureSize} disabled={screenStage !== 'idle' && screenStage !== 'error'} onChange={e => setCaptureSize(e.target.value as typeof captureSize)} aria-label="录屏清晰度"><option value="source">原始尺寸</option><option value="720">720p</option><option value="1080">1080p</option></select></div><Tool icon={<MousePointer2/>} label={timelineTool === 'select' ? '选择中' : '选择'} active={timelineTool === 'select'} action={() => { setTimelineTool(tool => tool === 'select' ? 'move' : 'select'); setStatus(timelineTool === 'select' ? '已切回片段移动模式' : '选择模式：在音频波形上按住鼠标拖出区间') }}/><Tool icon={<Scissors/>} label="保留选区" action={keepSelection} disabled={!selectedClip}/><Tool icon={<Trash2/>} label="删除选区" action={deleteSelection} disabled={!selectedClip}/><Tool icon={<Waves/>} label="淡入 / 淡出"/><div className="tool-spacer"/><Tool icon={<Undo2/>} label="撤销" action={undo} disabled={!history.length}/><Tool icon={<Redo2/>} label="重做" action={redo} disabled={!future.length}/></aside>
       <section className="workspace">
-        <AudioEditToolbar disabled={!trackStore.activeTrack.clips.length} canPaste={!!audioClipboard} onCut={cutSelection} onCopy={copySelection} onPaste={pasteAudio} onDelete={deleteSelection} onTrim={keepSelection} onSplit={splitAtPlayhead} onDuplicate={duplicateSelectionToTrack} onImport={() => fragmentInput.current?.click()} onMerge={() => void mergeSelectedTracks()} onSilence={() => transformSelection('silence', '静音')} onReverse={() => transformSelection('reverse', '反转')} onNormalize={() => transformSelection('normalize', '标准化')} onFadeIn={() => transformSelection('fadeIn', '淡入')} onFadeOut={() => transformSelection('fadeOut', '淡出')} effectScope={effectScope} voicePreset={pendingVoicePreset} pitchSemitones={activePitchSemitones} onEffectScope={setEffectScope} onVoicePreset={setPendingVoicePreset} onApplyVoice={() => changeVoicePreset(pendingVoicePreset)} onRestoreVoice={() => { setPendingVoicePreset('none'); changeVoicePreset('none'); setStatus(`已将${effectScope === 'clip' ? '当前片段' : '当前音轨'}恢复为原声`) }} onPitchSemitones={changePitchSemitones} onApplyPitch={() => void applyCentralPitch()}/>
+        <AudioEditToolbar disabled={!trackStore.activeTrack.clips.length} canPaste={!!audioClipboard} onCut={cutSelection} onCopy={copySelection} onPaste={pasteAudio} onDelete={deleteSelection} onTrim={keepSelection} onSplit={splitAtPlayhead} onDuplicate={duplicateSelectionToTrack} onImport={() => fragmentInput.current?.click()} onMerge={() => void mergeSelectedTracks()} onSilence={() => transformSelection('silence', '静音')} onReverse={() => transformSelection('reverse', '反转')} onNormalize={() => transformSelection('normalize', '标准化')} onFadeIn={() => transformSelection('fadeIn', '淡入')} onFadeOut={() => transformSelection('fadeOut', '淡出')} effectScope={effectScope} voicePreset={pendingVoicePreset} pitchSemitones={activePitchSemitones} onEffectScope={setEffectScope} onVoicePreset={setPendingVoicePreset} onApplyVoice={() => void confirmVoicePreset()} onRestoreVoice={restoreOriginalVoice} onPitchSemitones={changePitchSemitones} onApplyPitch={() => void applyCentralPitch()}/>
+        <ChannelEditor disabled={!selectedClip} channels={selectedClip?.buffer.numberOfChannels || 0} leftGain={channelMix.leftGain} rightGain={channelMix.rightGain} pan={channelMix.pan} onLeftGain={leftGain => setChannelMix(value => ({ ...value, leftGain }))} onRightGain={rightGain => setChannelMix(value => ({ ...value, rightGain }))} onPan={pan => setChannelMix(value => ({ ...value, pan }))} onApply={() => applyChannelProcess({}, '左右音量与声像')} onAction={channelAction}/>
         <div className="master-controls"><strong>总控</strong><label>速度<input type="range" min=".5" max="2" step=".05" value={speed} onChange={e => setSpeed(+e.target.value)}/><output>{speed.toFixed(2)}×</output></label><label>主音量<input type="range" min="0" max="2" step=".01" value={masterVolume} onChange={e => setMasterVolume(+e.target.value)}/><output>{Math.round(masterVolume * 100)}%</output></label><button className={`compact-tracks-toggle ${compactTracks ? 'active' : ''}`} onClick={() => setCompactTracks(value => !value)}>{compactTracks ? '紧凑轨道' : '标准轨道'}</button></div>
         <div className={`timeline-body ${compactTracks ? 'compact' : ''}`} ref={timelineBodyRef} style={{ '--one-second-step': `${1 / timelineDuration * 100}%`, '--five-second-step': `${5 / timelineDuration * 100}%` } as React.CSSProperties}>
         <div className="ruler" style={{ '--five-second-step': `${5 / timelineDuration * 100}%` } as React.CSSProperties}>{Array.from({length: Math.floor(timelineDuration / 5) + 1}, (_, i) => <span key={i}>{formatTime(i * 5)}</span>)}</div>

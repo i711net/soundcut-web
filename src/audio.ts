@@ -127,3 +127,26 @@ export function separateStereo(source: AudioBuffer, mode: 'vocals' | 'instrument
   }
   return output
 }
+
+export type ChannelProcessOptions = { leftGain: number; rightGain: number; pan: number; muteLeft?: boolean; muteRight?: boolean; swap?: boolean; invertLeft?: boolean; invertRight?: boolean; mono?: boolean; forceStereo?: boolean }
+
+export function processChannels(source: AudioBuffer, options: ChannelProcessOptions) {
+  const outputChannels = options.mono ? 1 : options.forceStereo ? 2 : source.numberOfChannels
+  const output = new AudioBuffer({ length: source.length, numberOfChannels: outputChannels, sampleRate: source.sampleRate })
+  const left = source.getChannelData(0), right = source.getChannelData(Math.min(1, source.numberOfChannels - 1))
+  const panLeft = options.pan > 0 ? 1 - options.pan : 1, panRight = options.pan < 0 ? 1 + options.pan : 1
+  for (let i = 0; i < source.length; i++) {
+    let l = (options.swap ? right[i] : left[i]) * options.leftGain * panLeft, r = (options.swap ? left[i] : right[i]) * options.rightGain * panRight
+    if (options.muteLeft) l = 0; if (options.muteRight) r = 0
+    if (options.invertLeft) l *= -1; if (options.invertRight) r *= -1
+    if (outputChannels === 1) output.getChannelData(0)[i] = (l + r) * .5
+    else { output.getChannelData(0)[i] = l; output.getChannelData(1)[i] = r }
+  }
+  return output
+}
+
+export function extractChannel(source: AudioBuffer, channel: 0 | 1) {
+  const output = new AudioBuffer({ length: source.length, numberOfChannels: 1, sampleRate: source.sampleRate })
+  output.copyToChannel(source.getChannelData(Math.min(channel, source.numberOfChannels - 1)), 0)
+  return output
+}
