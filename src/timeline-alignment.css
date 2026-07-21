@@ -1,0 +1,28 @@
+.timeline-playhead {
+  z-index: 9;
+  top: 0;
+  left: calc(130px + (100% - 140px) * var(--playhead) / 100);
+}
+
+.track-canvas {
+  background-color: #0a1721 !important;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(112, 164, 181, .13) 0 1px, transparent 1px var(--one-second-step)),
+    repeating-linear-gradient(90deg, rgba(93, 226, 218, .38) 0 2px, transparent 2px var(--five-second-step)) !important;
+  background-position: left top !important;
+}
+
+.clip-lane,
+.empty,
+.video-empty {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+@media (max-width: 1050px) {
+  .timeline-playhead { left: calc(106px + (100% - 116px) * var(--playhead) / 100); }
+}
+
+@media (max-width: 780px) {
+  .timeline-playhead { left: calc(92px + (100% - 102px) * var(--playhead) / 100); }
+}
