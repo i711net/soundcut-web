@@ -23,7 +23,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     if (!playable.length) return
     offset.current = Math.max(0, Math.min(time, duration)); startedAt.current = audioContext.currentTime
     for (const track of playable) {
-      const clips = track.clips.length ? track.clips : track.buffer ? [{ id: `${track.id}-legacy`, buffer: track.buffer, start: 0, offset: 0, duration: track.buffer.duration, volume: 1, playbackRate: 1 }] : []
+      const clips = track.clips.length ? track.clips : track.buffer ? [{ id: `${track.id}-legacy`, buffer: track.buffer, start: 0, offset: 0, duration: track.buffer.duration, volume: 1, playbackRate: 1, voicePreset: 'none' as const, pitchSemitones: 0 }] : []
       for (const clip of clips) {
         const rate = trackRate(track, masterRate) * clip.playbackRate, clipEnd = clip.start + clip.duration / rate
         if (offset.current >= clipEnd) continue
@@ -31,7 +31,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
         if (bufferOffset >= clip.offset + clip.duration) continue
         const node = audioContext.createBufferSource(), gain = audioContext.createGain(), key = `${track.id}:${clip.id}`
         node.buffer = clip.buffer; node.playbackRate.value = rate; gain.gain.value = track.volume * track.clipVolume * clip.volume * masterVolume
-        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, track.clipVoicePreset]); gain.connect(audioContext.destination); node.start(audioContext.currentTime + delay, bufferOffset, clip.offset + clip.duration - bufferOffset)
+        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(audioContext.destination); node.start(audioContext.currentTime + delay, bufferOffset, clip.offset + clip.duration - bufferOffset)
         node.onended = () => nodes.current.delete(key); nodes.current.set(key, node); gains.current.set(key, gain)
       }
     }
@@ -57,7 +57,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   }, [masterRate, masterVolume, tracks])
 
   useEffect(() => {
-    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clipVoicePreset}`).join('|')
+    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clips.map(clip => `${clip.id}:${clip.voicePreset}`).join(',')}`).join('|')
     const changed = effectSignature.current !== '' && effectSignature.current !== signature
     effectSignature.current = signature
     if (!changed || !playing || !context.current) return

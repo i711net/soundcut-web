@@ -1,5 +1,5 @@
 export type TrackKind = 'main' | 'video' | 'audio'
-export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; fadeIn: number; fadeOut: number }
+export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; fadeIn: number; fadeOut: number; voicePreset: VoicePreset; pitchSemitones: number }
 
 export type MixerTrack = {
   id: string
@@ -24,7 +24,7 @@ export type MixerTrack = {
 }
 
 let clipSequence = 1
-export const newClip = (buffer: AudioBuffer, name = '音频片段', start = 0): AudioClip => ({ id: `clip-${clipSequence++}`, name, buffer, start, offset: 0, duration: buffer.duration, volume: 1, playbackRate: 1, fadeIn: 0, fadeOut: 0 })
+export const newClip = (buffer: AudioBuffer, name = '音频片段', start = 0): AudioClip => ({ id: `clip-${clipSequence++}`, name, buffer, start, offset: 0, duration: buffer.duration, volume: 1, playbackRate: 1, fadeIn: 0, fadeOut: 0, voicePreset: 'none', pitchSemitones: 0 })
 
 export const newTrack = (id: string, name: string, kind: TrackKind, buffer: AudioBuffer | null = null): MixerTrack => ({
   id, name, kind, buffer, originalBuffer: buffer, muted: false, solo: false, volume: 1, playbackRate: 1,
@@ -59,7 +59,7 @@ export async function mixTracks(tracks: MixerTrack[], selectedOnly = true, maste
       const node = context.createBufferSource(), gain = context.createGain(), rate = trackRate(track, masterRate) * clip.playbackRate
       node.buffer = clip.buffer; node.playbackRate.value = rate
       gain.gain.value = track.muted ? 0 : track.volume * track.clipVolume * clip.volume * masterVolume
-      connectVoiceEffects(context, node, gain, [track.voicePreset, track.clipVoicePreset]); gain.connect(context.destination); node.start(clip.start, clip.offset, clip.duration)
+      connectVoiceEffects(context, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(context.destination); node.start(clip.start, clip.offset, clip.duration)
     }
   }
   return context.startRendering()
