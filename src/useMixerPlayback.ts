@@ -7,6 +7,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   const nodes = useRef<Map<string, AudioBufferSourceNode>>(new Map())
   const gains = useRef<Map<string, GainNode>>(new Map())
   const frame = useRef(0), startedAt = useRef(0), offset = useRef(0)
+  const effectSignature = useRef('')
   const [playing, setPlaying] = useState(false)
   const duration = durationOfTracks(tracks, masterRate)
 
@@ -47,6 +48,15 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
       if (node) node.playbackRate.setTargetAtTime(trackRate(track, masterRate), node.context.currentTime, .01)
     }
   }, [masterRate, masterVolume, tracks])
+
+  useEffect(() => {
+    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clipVoicePreset}`).join('|')
+    const changed = effectSignature.current !== '' && effectSignature.current !== signature
+    effectSignature.current = signature
+    if (!changed || !playing || !context.current) return
+    const currentTime = offset.current + (context.current.currentTime - startedAt.current)
+    void playFrom(currentTime)
+  }, [playFrom, playing, tracks])
 
   useEffect(() => () => { stop(); void context.current?.close() }, [stop])
   return { playing, duration, playFrom, stop }

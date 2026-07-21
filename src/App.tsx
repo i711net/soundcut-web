@@ -58,6 +58,7 @@ export default function App() {
   const screenPreview = useRef<HTMLVideoElement | null>(null), screenRecordingBlob = useRef<Blob | null>(null), screenRecordingObjectUrl = useRef('')
   const importTarget = useRef('track-1')
   const preserveMainPitch = useRef<number | null>(null)
+  const resumeAfterPitch = useRef<{ trackId: string; semitones: number; time: number } | null>(null)
   const mixerPlayback = useMixerPlayback(trackStore.tracks, speed, masterVolume, time => { currentTimeRef.current = time; setCurrentTime(time) })
   const timelineDuration = mixerPlayback.duration || 120
   const playheadPercent = Math.min(100, Math.max(0, currentTime / timelineDuration * 100))
@@ -67,6 +68,14 @@ export default function App() {
   useEffect(() => { if (videoElement.current) videoElement.current.playbackRate = speed * trackStore.tracks[1].playbackRate * trackStore.tracks[1].clipPlaybackRate }, [speed, trackStore.tracks])
   useEffect(() => { currentTimeRef.current = currentTime }, [currentTime])
   useEffect(() => { if (preserveMainPitch.current !== null) { trackStore.setTrackProcessedBuffer('track-1', buffer, preserveMainPitch.current); preserveMainPitch.current = null } else trackStore.setTrackBuffer('track-1', buffer) }, [buffer, trackStore.setTrackBuffer, trackStore.setTrackProcessedBuffer])
+  useEffect(() => {
+    const pending = resumeAfterPitch.current
+    if (!pending || trackStore.tracks.find(track => track.id === pending.trackId)?.appliedPitchSemitones !== pending.semitones) return
+    resumeAfterPitch.current = null
+    const resumeAt = pending.time
+    const restart = window.requestAnimationFrame(() => void mixerPlayback.playFrom(resumeAt))
+    return () => window.cancelAnimationFrame(restart)
+  }, [trackStore.tracks, mixerPlayback.playFrom])
 
   const loadFile = async (file?: File) => {
     if (!file) return
@@ -115,9 +124,13 @@ export default function App() {
     if (recording) { recorder.current?.stop(); return }
     setMicState('requesting'); setMicError(''); setStatus('正在请求麦克风权限…')
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
+      if (!window.isSecureContext) throw new Error('麦克风只能在 HTTPS 安全网址或本机 localhost 中使用。')
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('当前浏览器不支持网页麦克风录音，请使用最新版 Chrome、Edge 或 Safari。')
+      if (typeof MediaRecorder === 'undefined') throw new Error('当前浏览器没有提供录音编码器，请改用最新版 Chrome 或 Edge。')
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
       recorderStream.current = stream; recordingChunks.current = []
-      const mediaRecorder = new MediaRecorder(stream); recorder.current = mediaRecorder
+      const preferredType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type))
+      const mediaRecorder = preferredType ? new MediaRecorder(stream, { mimeType: preferredType }) : new MediaRecorder(stream); recorder.current = mediaRecorder
       mediaRecorder.ondataavailable = event => { if (event.data.size) recordingChunks.current.push(event.data) }
       mediaRecorder.onstop = async () => {
         clearInterval(recordingTimer.current); stream.getTracks().forEach(track => track.stop()); recorderStream.current = null; setRecording(false); setMicState('idle')
@@ -131,8 +144,10 @@ export default function App() {
       mediaRecorder.start(250); setRecordingSeconds(0); setRecording(true); setMicState('recording'); setStatus('正在录音…')
       recordingTimer.current = window.setInterval(() => setRecordingSeconds(value => value + 1), 1000)
     } catch (error) {
+      recorderStream.current?.getTracks().forEach(track => track.stop()); recorderStream.current = null
       const name = error instanceof DOMException ? error.name : ''
-      const message = name === 'NotAllowedError' ? '麦克风权限被拒绝。请点击地址栏左侧的权限图标，允许麦克风后重试。' : name === 'NotFoundError' ? '没有找到可用的麦克风，请连接麦克风后重试。' : name === 'NotReadableError' ? '麦克风正被其他程序占用，请关闭占用程序后重试。' : '无法启动麦克风，请确认浏览器允许本站使用麦克风。'
+      const detail = error instanceof Error ? error.message : String(error)
+      const message = name === 'NotAllowedError' || name === 'SecurityError' ? '麦克风权限被拒绝。请点击地址栏左侧的权限图标，允许麦克风后刷新页面。' : name === 'NotFoundError' || name === 'DevicesNotFoundError' ? '没有找到可用的麦克风，请连接麦克风后重试。' : name === 'NotReadableError' || name === 'TrackStartError' ? '麦克风正被其他程序占用，或系统禁止浏览器访问。请关闭占用程序并检查系统麦克风隐私设置。' : detail || '无法启动麦克风，请确认浏览器允许本站使用麦克风。'
       setMicError(message); setMicState('error'); setStatus(message)
     }
   }
@@ -216,9 +231,11 @@ export default function App() {
       const shifted = await pitchShiftWav(bufferToWav(track.originalBuffer), semitones, track.originalBuffer.sampleRate)
       const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
       const decoded = await ctx.decodeAudioData(await shifted.arrayBuffer())
+      const shouldResume = mixerPlayback.playing
+      if (shouldResume) { resumeAfterPitch.current = { trackId, semitones, time: currentTimeRef.current }; mixerPlayback.stop() }
       if (trackId === 'track-1') { preserveMainPitch.current = semitones; setBuffer(decoded) }
       else trackStore.setTrackProcessedBuffer(trackId, decoded, semitones)
-      setStatus(`歌曲变调已应用：${semitones > 0 ? '+' : ''}${semitones} 半音，时长已补偿`)
+      setStatus(`歌曲变调已应用：${semitones > 0 ? '+' : ''}${semitones} 半音${shouldResume ? '，已从当前位置继续播放' : ''}`)
     } catch { setStatus('歌曲变调失败，请尝试 WAV 文件或较短的片段') }
     finally { setPitchWorkingId('') }
   }
