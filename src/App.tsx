@@ -114,11 +114,14 @@ export default function App() {
     if (!file) return
     try {
       setMediaWorking(true); setStatus('正在打开媒体…')
+      const isVideo = file.type.startsWith('video/'), name = file.name.replace(/\.[^.]+$/, '')
       const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
-      const data = file.type.startsWith('video/') ? await (await extractAudioFromVideo(file)).arrayBuffer() : await file.arrayBuffer()
+      const data = isVideo ? await (await extractAudioFromVideo(file)).arrayBuffer() : await file.arrayBuffer()
       const decoded = await ctx.decodeAudioData(data)
-      setAudioClipboard(decoded); setFileName(file.name.replace(/\.[^.]+$/, ''))
-      setStatus('媒体已打开：先选择目标音轨和播放位置，再点击“粘贴”放入；之后可随意上下拖动')
+      const trackId = trackStore.activeId, at = currentTimeRef.current, clipId = trackStore.addClip(trackId, decoded, isVideo ? `${name} · 原声` : name, at)
+      if (isVideo) { if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current); videoObjectUrl.current = URL.createObjectURL(file); setVideoUrl(videoObjectUrl.current); setStreamSourceUrl('') }
+      setAudioClipboard(decoded); setFileName(name); setSelectedClipId(clipId); setSelection([at, at + decoded.duration]); setSettings(value => ({ ...value, start: at, end: at + decoded.duration }))
+      setStatus(`${isVideo ? '视频原声' : '音频'}已放入当前音轨的 ${formatTime(at, true)} 位置，可直接播放或拖到其他音轨`)
     } catch { setStatus('无法打开该媒体文件') } finally { setMediaWorking(false) }
   }
   const openStream = () => {
