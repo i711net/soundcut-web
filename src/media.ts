@@ -42,11 +42,11 @@ const options = {
   ogg: { args: ['-codec:a', 'libvorbis', '-q:a', '5'], mime: 'audio/ogg' },
 } satisfies Record<Exclude<AudioExportFormat, 'wav'>, { args: string[]; mime: string }>
 
-export async function convertWav(wav: Blob, format: Exclude<AudioExportFormat, 'wav'>) {
-  const ffmpeg = await getFFmpeg(), input = 'edited.wav', output = `soundcut.${format}`, option = options[format]
+export async function convertWav(wav: Blob, format: Exclude<AudioExportFormat, 'wav'>, bitrate = 192) {
+  const ffmpeg = await getFFmpeg(), input = 'edited.wav', output = `soundcut.${format}`, option = options[format], args = format === 'ogg' ? ['-codec:a', 'libvorbis', '-b:a', `${bitrate}k`] : option.args.map(value => value === '192k' ? `${bitrate}k` : value)
   await ffmpeg.writeFile(input, await fetchFile(wav))
   try {
-    await ffmpeg.exec(['-i', input, ...option.args, output])
+    await ffmpeg.exec(['-i', input, ...args, output])
     const data = await ffmpeg.readFile(output)
     if (typeof data === 'string') throw new Error('音频编码失败')
     return new Blob([data.slice().buffer], { type: option.mime })

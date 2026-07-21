@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, Rewind, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText, Video, Plus, CopyPlus, Headphones, Square, MonitorUp, UserRound, AudioLines, Save, FolderOpen } from 'lucide-react'
-import { bufferToWav, extractChannel, formatTime, processChannels, renderBuffer, separateStereo, transformRange, type ChannelProcessOptions, type EditSettings } from './audio'
+import { bufferToWav, extractChannel, formatTime, normalizePeak, processChannels, renderBuffer, resampleAudioBuffer, separateStereo, transformRange, type ChannelProcessOptions, type EditSettings } from './audio'
 import TranscriptPanel from './TranscriptPanel'
 import { mergeTranscriptSegments, parseVtt, type TranscriptSegment } from './transcript'
 import { convertWav, extractAudioFromVideo, pitchShiftWav, transformPitchAndTempoWav, type AudioExportFormat } from './media'
@@ -36,6 +36,8 @@ import './speed-pitch.css'
 import './multi-selection.css'
 import MarkerPanel from './MarkerPanel'
 import './markers.css'
+import ExportPanel, { defaultExportSettings, type ExportSettings } from './ExportPanel'
+import './export-panel.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject, type TimelineMarker } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -75,6 +77,7 @@ export default function App() {
   const [transcriptionProgress, setTranscriptionProgress] = useState(0)
   const [transcriptionError, setTranscriptionError] = useState('')
   const [exportFormat, setExportFormat] = useState<AudioExportFormat>('wav')
+  const [exportSettings, setExportSettings] = useState<ExportSettings>(defaultExportSettings)
   const [mediaWorking, setMediaWorking] = useState(false)
   const [videoUrl, setVideoUrl] = useState('')
   const [streamUrlInput, setStreamUrlInput] = useState('')
@@ -122,7 +125,7 @@ export default function App() {
     return () => window.cancelAnimationFrame(restart)
   }, [trackStore.tracks, mixerPlayback.playFrom])
 
-  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers })
+  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings })
   const applyProject = (project: StoredProject, recovered = false) => {
     mixerPlayback.stop()
     const restored = deserializeProject(project), value = restored.settings
@@ -131,7 +134,7 @@ export default function App() {
     skipBufferSync.current = true; setBuffer(main?.buffer || null)
     setFileName(value.fileName || '未命名项目'); setSelection(value.selection || [0, 0]); setSelectedClipId(value.selectedClipId || '')
     setSpeed(value.speed || 1); setMasterVolume(value.masterVolume ?? 1); setSnapEnabled(value.snapEnabled ?? true); setSnapGap(value.snapGap || 0); setTimelinePadding(value.timelinePadding || 60); setTimelineZoom(value.timelineZoom || 12); setCompactTracks(!!value.compactTracks)
-    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat); setMarkers(value.markers || [])
+    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat); setMarkers(value.markers || []); setExportSettings(value.exportSettings || defaultExportSettings())
     setCurrentTime(0); currentTimeRef.current = 0; setHistory([]); setFuture([]); setStatus(recovered ? `已恢复自动保存：${new Date(project.savedAt).toLocaleString()}` : '工程已打开，可以继续编辑')
   }
   const saveProjectFile = () => {
@@ -162,7 +165,7 @@ export default function App() {
       void saveAutosave(serializeProject(trackStore.tracks, projectSettings())).then(() => setStatus(current => current === '准备就绪' ? '工程已自动保存' : current)).catch(() => setStatus('自动保存失败：浏览器存储空间可能不足'))
     }, 1800)
     return () => window.clearTimeout(timer)
-  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers])
+  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings])
 
   const changeTimelineZoom = (next: number, clientX?: number) => {
     const body = timelineBodyRef.current, clamped = Math.max(6, Math.min(200, next))
@@ -595,12 +598,20 @@ export default function App() {
   const exportAudio = async () => {
     if (!trackStore.tracks.some(track => track.buffer && track.includeInExport)) return input.current?.click()
     try {
-      setMediaWorking(true); setStatus(exportFormat === 'wav' ? '正在生成 WAV…' : `正在加载 FFmpeg 并编码 ${exportFormat.toUpperCase()}…`)
-      const rendered = await mixTracks(trackStore.tracks, true, speed, masterVolume), wav = bufferToWav(rendered)
-      const blob = exportFormat === 'wav' ? wav : await convertWav(wav, exportFormat)
-      const url = URL.createObjectURL(blob), anchor = document.createElement('a')
-      anchor.href = url; anchor.download = `${fileName || 'soundcut'}.${exportFormat}`; anchor.click()
-      setTimeout(() => URL.revokeObjectURL(url), 1000); setStatus(`${exportFormat.toUpperCase()} 已导出`)
+      setMediaWorking(true); setStatus(`正在准备${exportSettings.scope === 'stems' ? '分轨' : exportSettings.scope === 'clips' ? '逐片段' : ''}导出…`)
+      const sources = trackStore.tracks.filter(track => track.clips.length && track.includeInExport), jobs: Array<{ buffer: AudioBuffer; track: string; clip: string; index: number }> = []
+      if (exportSettings.scope === 'stems') { for (let index = 0; index < sources.length; index++) jobs.push({ buffer: await mixTracks([sources[index]], false, speed, masterVolume), track: sources[index].name, clip: '', index: index + 1 }) }
+      else if (exportSettings.scope === 'clips') { let index = 1; for (const track of sources) for (const clip of track.clips) { const isolated = { ...track, muted: false, clips: [{ ...clip, start: 0 }] }; jobs.push({ buffer: await mixTracks([isolated], false, speed, masterVolume), track: track.name, clip: clip.name, index: index++ }) } }
+      else { let rendered = await mixTracks(trackStore.tracks, true, speed, masterVolume); if (exportSettings.scope === 'selection') { if (selection[1] - selection[0] < .01) throw new Error('请先选择时间区域'); rendered = renderBuffer(rendered, { start: selection[0], end: Math.min(rendered.duration, selection[1]), gain: 1, fadeIn: 0, fadeOut: 0 }) } jobs.push({ buffer: rendered, track: '混音', clip: exportSettings.scope === 'selection' ? '选区' : '', index: 1 }) }
+      for (const job of jobs) {
+        let output = job.buffer
+        if (exportSettings.channels === 'mono') output = processChannels(output, { leftGain: 1, rightGain: 1, pan: 0, mono: true })
+        else if (exportSettings.channels === 'stereo') output = processChannels(output, { leftGain: 1, rightGain: 1, pan: 0, forceStereo: true })
+        output = await resampleAudioBuffer(output, exportSettings.sampleRate); if (exportSettings.normalize) output = normalizePeak(output)
+        const wav = bufferToWav(output, exportSettings.bitDepth), blob = exportFormat === 'wav' ? wav : await convertWav(wav, exportFormat, exportSettings.bitrate), safe = (value: string) => value.replace(/[\\/:*?"<>|]/g, '_'), name = exportSettings.filePattern.replaceAll('{project}', fileName || 'soundcut').replaceAll('{track}', job.track).replaceAll('{clip}', job.clip).replaceAll('{index}', String(job.index).padStart(2, '0')).replace(/[-_ ]+$/, '')
+        const url = URL.createObjectURL(blob), anchor = document.createElement('a'); anchor.href = url; anchor.download = `${safe(name || fileName || 'soundcut')}.${exportFormat}`; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 2000)
+      }
+      setStatus(`${jobs.length} 个 ${exportFormat.toUpperCase()} 文件已导出`)
     } catch { setStatus('格式转换失败，请尝试 WAV 或更短的媒体文件') }
     finally { setMediaWorking(false) }
   }
@@ -666,6 +677,7 @@ export default function App() {
         </section>
         <LevelMeters tracks={trackStore.tracks} meters={mixerPlayback.meters}/>
         <MarkerPanel markers={markers} currentTime={currentTime} selection={selection} onAddPoint={addPointMarker} onAddRegion={addRegionMarker} onChange={updateMarker} onDelete={deleteMarker} onSeek={seek}/>
+        <ExportPanel format={exportFormat} settings={exportSettings} selectionAvailable={selection[1] - selection[0] >= .01} onFormat={setExportFormat} onChange={setExportSettings}/>
         <div className="inspector-tabs">
           <button className={inspectorTab === 'properties' ? 'active' : ''} onClick={() => setInspectorTab('properties')}><SlidersHorizontal/>属性</button>
           <button className={inspectorTab === 'transcript' ? 'active' : ''} onClick={() => setInspectorTab('transcript')}><FileText/>文字{transcript.length > 0 && <i>{transcript.length}</i>}</button>

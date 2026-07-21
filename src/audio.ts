@@ -91,22 +91,28 @@ export function transformRange(source: AudioBuffer, from: number, to: number, mo
   return output
 }
 
-export function bufferToWav(buffer: AudioBuffer): Blob {
+export function bufferToWav(buffer: AudioBuffer, bitDepth: 16 | 24 | 32 = 16): Blob {
   const channels = buffer.numberOfChannels
-  const size = buffer.length * channels * 2
+  const bytesPerSample = bitDepth / 8, size = buffer.length * channels * bytesPerSample
   const view = new DataView(new ArrayBuffer(44 + size))
   const text = (offset: number, value: string) => [...value].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)))
   text(0, 'RIFF'); view.setUint32(4, 36 + size, true); text(8, 'WAVE'); text(12, 'fmt ')
-  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, channels, true)
-  view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * channels * 2, true)
-  view.setUint16(32, channels * 2, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, size, true)
+  view.setUint32(16, 16, true); view.setUint16(20, bitDepth === 32 ? 3 : 1, true); view.setUint16(22, channels, true)
+  view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * channels * bytesPerSample, true)
+  view.setUint16(32, channels * bytesPerSample, true); view.setUint16(34, bitDepth, true); text(36, 'data'); view.setUint32(40, size, true)
   let offset = 44
   for (let i = 0; i < buffer.length; i++) for (let c = 0; c < channels; c++) {
     const sample = Math.max(-1, Math.min(1, buffer.getChannelData(c)[i]))
-    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true); offset += 2
+    if (bitDepth === 16) view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+    else if (bitDepth === 24) { const value = Math.round(sample < 0 ? sample * 0x800000 : sample * 0x7fffff); view.setUint8(offset, value & 255); view.setUint8(offset + 1, value >> 8 & 255); view.setUint8(offset + 2, value >> 16 & 255) }
+    else view.setFloat32(offset, sample, true)
+    offset += bytesPerSample
   }
   return new Blob([view], { type: 'audio/wav' })
 }
+
+export async function resampleAudioBuffer(source: AudioBuffer, sampleRate: number) { if (source.sampleRate === sampleRate) return source; const context = new OfflineAudioContext(source.numberOfChannels, Math.ceil(source.duration * sampleRate), sampleRate), node = context.createBufferSource(); node.buffer = source; node.connect(context.destination); node.start(); return context.startRendering() }
+export function normalizePeak(source: AudioBuffer, target = .891) { let peak = 0; for (let channel = 0; channel < source.numberOfChannels; channel++) for (const value of source.getChannelData(channel)) peak = Math.max(peak, Math.abs(value)); if (!peak || peak <= target) return source; const output = new AudioBuffer({ length: source.length, numberOfChannels: source.numberOfChannels, sampleRate: source.sampleRate }), gain = target / peak; for (let channel = 0; channel < source.numberOfChannels; channel++) { const input = source.getChannelData(channel), data = output.getChannelData(channel); for (let index = 0; index < input.length; index++) data[index] = input[index] * gain } return output }
 
 export function formatTime(value: number, precise = false) {
   const safe = Math.max(0, value || 0)

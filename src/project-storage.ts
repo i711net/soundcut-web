@@ -1,6 +1,7 @@
 import type { MixerTrack } from './mixer'
 import type { TranscriptSegment } from './transcript'
 import { defaultAudioEffects } from './audio-effects'
+import type { ExportSettings } from './ExportPanel'
 
 const DB_NAME = 'soundcut-projects'
 const STORE_NAME = 'autosave'
@@ -27,6 +28,7 @@ export type ProjectSettings = {
   contentMode: 'speech' | 'song'
   exportFormat: string
   markers?: TimelineMarker[]
+  exportSettings?: ExportSettings
 }
 
 export type TimelineMarker = { id: string; name: string; time: number; end?: number; color: string }
