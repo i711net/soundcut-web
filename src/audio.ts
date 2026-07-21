@@ -32,6 +32,38 @@ export function removeRange(source: AudioBuffer, from: number, to: number): Audi
   return output
 }
 
+export function insertBuffer(source: AudioBuffer, fragment: AudioBuffer, at: number): AudioBuffer {
+  const position = Math.max(0, Math.min(source.length, Math.round(at * source.sampleRate)))
+  const fragmentLength = Math.max(1, Math.round(fragment.duration * source.sampleRate))
+  const channels = Math.max(source.numberOfChannels, fragment.numberOfChannels)
+  const output = new AudioBuffer({ length: source.length + fragmentLength, numberOfChannels: channels, sampleRate: source.sampleRate })
+  for (let c = 0; c < channels; c++) {
+    const target = output.getChannelData(c), input = source.getChannelData(Math.min(c, source.numberOfChannels - 1)), addition = fragment.getChannelData(Math.min(c, fragment.numberOfChannels - 1))
+    target.set(input.subarray(0, position)); target.set(input.subarray(position), position + fragmentLength)
+    for (let i = 0; i < fragmentLength; i++) target[position + i] = addition[Math.min(addition.length - 1, Math.floor(i * fragment.sampleRate / source.sampleRate))] || 0
+  }
+  return output
+}
+
+export function transformRange(source: AudioBuffer, from: number, to: number, mode: 'silence' | 'reverse' | 'normalize' | 'fadeIn' | 'fadeOut'): AudioBuffer {
+  const start = Math.max(0, Math.min(source.length, Math.floor(from * source.sampleRate))), end = Math.max(start, Math.min(source.length, Math.ceil(to * source.sampleRate)))
+  const output = new AudioBuffer({ length: source.length, numberOfChannels: source.numberOfChannels, sampleRate: source.sampleRate })
+  let peak = 0
+  if (mode === 'normalize') for (let c = 0; c < source.numberOfChannels; c++) for (let i = start; i < end; i++) peak = Math.max(peak, Math.abs(source.getChannelData(c)[i]))
+  for (let c = 0; c < source.numberOfChannels; c++) {
+    const input = source.getChannelData(c), target = output.getChannelData(c); target.set(input)
+    for (let i = start; i < end; i++) {
+      const progress = (i - start) / Math.max(1, end - start - 1)
+      if (mode === 'silence') target[i] = 0
+      else if (mode === 'reverse') target[i] = input[end - 1 - (i - start)]
+      else if (mode === 'normalize') target[i] = input[i] * (peak > 0 ? .98 / peak : 1)
+      else if (mode === 'fadeIn') target[i] = input[i] * progress
+      else target[i] = input[i] * (1 - progress)
+    }
+  }
+  return output
+}
+
 export function bufferToWav(buffer: AudioBuffer): Blob {
   const channels = buffer.numberOfChannels
   const size = buffer.length * channels * 2
