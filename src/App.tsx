@@ -79,6 +79,8 @@ export default function App() {
   const resumeAfterPitch = useRef<{ trackId: string; semitones: number; time: number } | null>(null)
   const mixerPlayback = useMixerPlayback(trackStore.tracks, speed, masterVolume, time => { currentTimeRef.current = time; setCurrentTime(time) })
   const timelineDuration = Math.max(120, mixerPlayback.duration)
+  const videoTrackForPlayback = trackStore.tracks.find(track => track.id === 'video-1')
+  const shouldSyncVideoPlayback = !!videoUrl && !!videoTrackForPlayback?.clips.length && !videoTrackForPlayback.muted
   const playheadPercent = Math.min(100, Math.max(0, currentTime / timelineDuration * 100))
 
   useEffect(() => () => { source.current?.stop(); cancelAnimationFrame(frame.current); clearInterval(screenTimer.current); screenStream.current?.getTracks().forEach(track => track.stop()); audioContext.current?.close(); if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current); if (screenRecordingObjectUrl.current) URL.revokeObjectURL(screenRecordingObjectUrl.current) }, [])
@@ -267,7 +269,7 @@ export default function App() {
     const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx; await ctx.resume()
     const node = ctx.createBufferSource(), gain = ctx.createGain(); node.buffer = buffer; node.playbackRate.value = speed; gain.gain.value = settings.gain; node.connect(gain).connect(ctx.destination)
     const from = currentTimeRef.current >= buffer.duration ? 0 : currentTimeRef.current; offset.current = from; startedAt.current = ctx.currentTime; source.current = node; node.start(0, from); setPlaying(true)
-    if (videoElement.current) { videoElement.current.currentTime = from; videoElement.current.playbackRate = speed; void videoElement.current.play().catch(() => undefined) }
+    if (videoElement.current && shouldSyncVideoPlayback) { videoElement.current.currentTime = from; videoElement.current.playbackRate = speed; void videoElement.current.play().catch(() => undefined) }
     const tick = () => { const next = offset.current + (ctx.currentTime - startedAt.current) * speed; setCurrentTime(Math.min(next, buffer.duration)); if (next < buffer.duration && source.current) frame.current = requestAnimationFrame(tick) }
     frame.current = requestAnimationFrame(tick); node.onended = () => { source.current = null; cancelAnimationFrame(frame.current); videoElement.current?.pause(); setPlaying(false) }
   }
@@ -288,13 +290,14 @@ export default function App() {
     if (!playheadDrag.current.active) return
     scrubPlayhead(event.clientX); const resume = playheadDrag.current.resume; playheadDrag.current = { active: false, resume: false }
     setPlaying(false); videoElement.current?.pause()
-    if (resume) { void mixerPlayback.playFrom(currentTimeRef.current); if (videoElement.current) { videoElement.current.currentTime = currentTimeRef.current; void videoElement.current.play().catch(() => undefined) }; setStatus('已从拖动后的新位置继续播放') }
+    if (resume) { void mixerPlayback.playFrom(currentTimeRef.current); if (videoElement.current && shouldSyncVideoPlayback) { videoElement.current.currentTime = currentTimeRef.current; void videoElement.current.play().catch(() => undefined) }; setStatus('已从拖动后的新位置继续播放') }
     else setStatus('播放头位置已更新；点击主播放键后播放')
   }
   const toggleMixerPlayback = async () => {
     if (mixerPlayback.playing || (videoElement.current && !videoElement.current.paused)) { mixerPlayback.stop(); stop(); videoElement.current?.pause(); setPlaying(false); setStatus('播放已停止'); return }
     await mixerPlayback.playFrom(currentTimeRef.current)
-    if (videoElement.current) { videoElement.current.currentTime = currentTimeRef.current; videoElement.current.playbackRate = speed; void videoElement.current.play().catch(() => undefined) }
+    if (videoElement.current && shouldSyncVideoPlayback) { videoElement.current.currentTime = currentTimeRef.current; videoElement.current.playbackRate = speed; void videoElement.current.play().catch(() => undefined) }
+    else videoElement.current?.pause()
   }
   const selectedClip = trackStore.activeTrack.clips.find(clip => clip.id === selectedClipId)
   const activeVoicePreset = effectScope === 'clip' ? selectedClip?.voicePreset || 'none' : trackStore.activeTrack.voicePreset
