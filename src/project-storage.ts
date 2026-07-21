@@ -2,6 +2,7 @@ import type { MixerTrack } from './mixer'
 import type { TranscriptSegment } from './transcript'
 import { defaultAudioEffects } from './audio-effects'
 import type { ExportSettings } from './ExportPanel'
+import type { MidiProject } from './midi'
 
 const DB_NAME = 'soundcut-projects'
 const STORE_NAME = 'autosave'
@@ -30,6 +31,9 @@ export type ProjectSettings = {
   markers?: TimelineMarker[]
   exportSettings?: ExportSettings
   performanceMode?: boolean
+  midiProject?: MidiProject | null
+  midiTranspose?: number
+  midiInstrument?: OscillatorType
 }
 
 export type TimelineMarker = { id: string; name: string; time: number; end?: number; color: string }

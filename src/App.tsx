@@ -40,6 +40,9 @@ import ExportPanel, { defaultExportSettings, type ExportSettings } from './Expor
 import './export-panel.css'
 import PerformancePanel from './PerformancePanel'
 import './performance.css'
+import MidiPanel from './MidiPanel'
+import { parseMidi, renderMidi, type MidiProject } from './midi'
+import './midi.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject, type TimelineMarker } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -81,6 +84,10 @@ export default function App() {
   const [exportFormat, setExportFormat] = useState<AudioExportFormat>('wav')
   const [exportSettings, setExportSettings] = useState<ExportSettings>(defaultExportSettings)
   const [performanceMode, setPerformanceMode] = useState(false)
+  const [midiProject, setMidiProject] = useState<MidiProject | null>(null)
+  const [midiTranspose, setMidiTranspose] = useState(0)
+  const [midiInstrument, setMidiInstrument] = useState<OscillatorType>('triangle')
+  const [midiWorking, setMidiWorking] = useState(false)
   const [mediaWorking, setMediaWorking] = useState(false)
   const [videoUrl, setVideoUrl] = useState('')
   const [streamUrlInput, setStreamUrlInput] = useState('')
@@ -132,7 +139,7 @@ export default function App() {
     return () => window.cancelAnimationFrame(restart)
   }, [trackStore.tracks, mixerPlayback.playFrom])
 
-  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings, performanceMode })
+  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings, performanceMode, midiProject, midiTranspose, midiInstrument })
   const applyProject = (project: StoredProject, recovered = false) => {
     mixerPlayback.stop()
     const restored = deserializeProject(project), value = restored.settings
@@ -141,7 +148,7 @@ export default function App() {
     skipBufferSync.current = true; setBuffer(main?.buffer || null)
     setFileName(value.fileName || '未命名项目'); setSelection(value.selection || [0, 0]); setSelectedClipId(value.selectedClipId || '')
     setSpeed(value.speed || 1); setMasterVolume(value.masterVolume ?? 1); setSnapEnabled(value.snapEnabled ?? true); setSnapGap(value.snapGap || 0); setTimelinePadding(value.timelinePadding || 60); setTimelineZoom(value.timelineZoom || 12); setCompactTracks(!!value.compactTracks)
-    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat); setMarkers(value.markers || []); setExportSettings(value.exportSettings || defaultExportSettings()); setPerformanceMode(!!value.performanceMode)
+    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat); setMarkers(value.markers || []); setExportSettings(value.exportSettings || defaultExportSettings()); setPerformanceMode(!!value.performanceMode); setMidiProject(value.midiProject || null); setMidiTranspose(value.midiTranspose || 0); setMidiInstrument(value.midiInstrument || 'triangle')
     setCurrentTime(0); currentTimeRef.current = 0; setHistory([]); setFuture([]); setStatus(recovered ? `已恢复自动保存：${new Date(project.savedAt).toLocaleString()}` : '工程已打开，可以继续编辑')
   }
   const saveProjectFile = () => {
@@ -174,7 +181,7 @@ export default function App() {
       void saveAutosave(serializeProject(trackStore.tracks, projectSettings())).then(() => setStatus(current => current === '准备就绪' ? '工程已自动保存' : current)).catch(() => setStatus('自动保存失败：浏览器存储空间可能不足')).finally(() => { autosaveBusy.current = false })
     }, 1800)
     return () => window.clearTimeout(timer)
-  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings, performanceMode])
+  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings, performanceMode, midiProject, midiTranspose, midiInstrument])
 
   const changeTimelineZoom = (next: number, clientX?: number) => {
     const body = timelineBodyRef.current, clamped = Math.max(6, Math.min(200, next))
@@ -401,6 +408,8 @@ export default function App() {
   const addRegionMarker = () => { if (selection[1] - selection[0] < .01) return setStatus('请先用选择工具拖出一个时间区域'); const marker: TimelineMarker = { id: `region-${Date.now()}`, name: `区域 ${markers.length + 1}`, time: selection[0], end: selection[1], color: '#63ddd6' }; setMarkers(items => [...items, marker]); setStatus(`已标记区域 ${formatTime(marker.time, true)} — ${formatTime(marker.end!, true)}`) }
   const updateMarker = (id: string, patch: Partial<TimelineMarker>) => setMarkers(items => items.map(marker => marker.id === id ? { ...marker, ...patch } : marker))
   const deleteMarker = (id: string) => { setMarkers(items => items.filter(marker => marker.id !== id)); setStatus('标记已删除') }
+  const importMidiFile = async (file?: File) => { if (!file) return; try { setStatus('正在解析MIDI文件…'); const project = parseMidi(await file.arrayBuffer(), file.name.replace(/\.(mid|midi)$/i, '')); setMidiProject(project); setMidiTranspose(0); setStatus(`MIDI已载入：${project.notes.length} 个音符，${project.bpm} BPM`) } catch (error) { setStatus(error instanceof Error ? error.message : '无法读取该MIDI文件') } }
+  const renderMidiTrack = async () => { if (!midiProject || midiWorking) return; try { setMidiWorking(true); setStatus('正在本地合成MIDI音频…'); const rendered = await renderMidi(midiProject, midiInstrument, midiTranspose), trackId = trackStore.addTrack(rendered, `${midiProject.name} · MIDI`, 'audio'); trackStore.setActiveId(trackId); setSelection([0, rendered.duration]); setStatus('MIDI已合成为新音频轨道，可以继续剪切和加效果') } catch { setStatus('MIDI合成失败，音符数量可能过多') } finally { setMidiWorking(false) } }
   const separateActiveTrack = () => {
     const track = trackStore.activeTrack
     if (!track.buffer) { setStatus('请先选择含音频的轨道'); return }
@@ -689,6 +698,7 @@ export default function App() {
         <MarkerPanel markers={markers} currentTime={currentTime} selection={selection} onAddPoint={addPointMarker} onAddRegion={addRegionMarker} onChange={updateMarker} onDelete={deleteMarker} onSeek={seek}/>
         <ExportPanel format={exportFormat} settings={exportSettings} selectionAvailable={selection[1] - selection[0] >= .01} onFormat={setExportFormat} onChange={setExportSettings}/>
         <PerformancePanel bytes={projectAudioBytes} duration={mixerPlayback.duration} clips={projectClipCount} history={history.length} enabled={performanceMode} onToggle={() => setPerformanceMode(value => !value)} onClearHistory={() => { setHistory([]); setFuture([]); setStatus('撤销与重做历史已清理') }} onReleaseClipboard={() => { setAudioClipboard(null); setStatus('复制粘贴音频缓存已释放') }}/>
+        <MidiPanel project={midiProject} transpose={midiTranspose} instrument={midiInstrument} working={midiWorking} onImport={file => void importMidiFile(file)} onTranspose={setMidiTranspose} onInstrument={setMidiInstrument} onRender={() => void renderMidiTrack()}/>
         <div className="inspector-tabs">
           <button className={inspectorTab === 'properties' ? 'active' : ''} onClick={() => setInspectorTab('properties')}><SlidersHorizontal/>属性</button>
           <button className={inspectorTab === 'transcript' ? 'active' : ''} onClick={() => setInspectorTab('transcript')}><FileText/>文字{transcript.length > 0 && <i>{transcript.length}</i>}</button>
