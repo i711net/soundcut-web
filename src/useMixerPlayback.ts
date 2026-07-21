@@ -23,7 +23,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     if (!playable.length) return
     offset.current = Math.max(0, Math.min(time, duration)); startedAt.current = audioContext.currentTime
     for (const track of playable) {
-      const clips = track.clips.length ? track.clips : track.buffer ? [{ id: `${track.id}-legacy`, buffer: track.buffer, start: 0, offset: 0, duration: track.buffer.duration, volume: 1, playbackRate: 1, voicePreset: 'none' as const, pitchSemitones: 0 }] : []
+      const clips = track.clips
       for (const clip of clips) {
         const rate = trackRate(track, masterRate) * clip.playbackRate, clipEnd = clip.start + clip.duration / rate
         if (offset.current >= clipEnd) continue

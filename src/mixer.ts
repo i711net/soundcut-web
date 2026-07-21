@@ -35,26 +35,26 @@ export const newTrack = (id: string, name: string, kind: TrackKind, buffer: Audi
 })
 
 export function audibleTracks(tracks: MixerTrack[]) {
-  const hasSolo = tracks.some(track => track.solo && track.buffer)
-  return tracks.filter(track => track.buffer && !track.muted && (!hasSolo || track.solo))
+  const hasSolo = tracks.some(track => track.solo && track.clips.length)
+  return tracks.filter(track => track.clips.length && !track.muted && (!hasSolo || track.solo))
 }
 
 export const trackRate = (track: MixerTrack, masterRate = 1) => masterRate * track.playbackRate * track.clipPlaybackRate
 
 export function durationOfTracks(tracks: MixerTrack[], masterRate = 1) {
-  return Math.max(0, ...tracks.flatMap(track => track.clips.length ? track.clips.map(clip => clip.start + clip.duration / (trackRate(track, masterRate) * clip.playbackRate)) : track.buffer ? [track.buffer.duration / trackRate(track, masterRate)] : [0]))
+  return Math.max(0, ...tracks.flatMap(track => track.clips.map(clip => clip.start + clip.duration / (trackRate(track, masterRate) * clip.playbackRate))))
 }
 
 export async function mixTracks(tracks: MixerTrack[], selectedOnly = true, masterRate = 1, masterVolume = 1) {
-  const sources = tracks.filter(track => (track.clips.length || track.buffer) && (!selectedOnly || track.includeInExport))
+  const sources = tracks.filter(track => track.clips.length && (!selectedOnly || track.includeInExport))
   if (!sources.length) throw new Error('没有可导出的轨道')
-  const allBuffers = sources.flatMap(track => track.clips.length ? track.clips.map(clip => clip.buffer) : track.buffer ? [track.buffer] : [])
+  const allBuffers = sources.flatMap(track => track.clips.map(clip => clip.buffer))
   const sampleRate = Math.max(...allBuffers.map(buffer => buffer.sampleRate))
   const channels = Math.max(...allBuffers.map(buffer => buffer.numberOfChannels))
   const duration = durationOfTracks(sources, masterRate)
   const context = new OfflineAudioContext(channels, Math.ceil(duration * sampleRate), sampleRate)
   for (const track of sources) {
-    const clips = track.clips.length ? track.clips : track.buffer ? [newClip(track.buffer, track.name)] : []
+    const clips = track.clips
     for (const clip of clips) {
       const node = context.createBufferSource(), gain = context.createGain(), rate = trackRate(track, masterRate) * clip.playbackRate
       node.buffer = clip.buffer; node.playbackRate.value = rate
