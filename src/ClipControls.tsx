@@ -8,7 +8,8 @@ type Props = { clip: AudioClip; onChange: (patch: Partial<AudioClip>) => void; o
 export default function ClipControls({ clip, onChange, onApplyPitch, pitchWorking = false }: Props) {
   const maxDuration = Math.max(.02, clip.buffer.duration - clip.offset)
   return <div className="clip-controls clip-properties" onPointerDown={event => event.stopPropagation()}>
-    <label title="片段播放速度"><Gauge/><span>速度</span><PreciseRange ariaLabel="当前片段速度" min={.25} max={4} step={.01} value={clip.playbackRate} onChange={playbackRate => onChange({ playbackRate })}/><output>{clip.playbackRate.toFixed(2)}×</output></label>
+    <label title="时间伸缩：改变速度但保持音高"><Gauge/><span>速度</span><PreciseRange ariaLabel="当前片段保调速度" min={.25} max={4} step={.01} value={clip.timeStretchRate || 1} onChange={timeStretchRate => onChange({ timeStretchRate })}/><output>{(clip.timeStretchRate || 1).toFixed(2)}×</output></label>
+    <button className="apply-stretch" onClick={onApplyPitch} disabled={pitchWorking}>{pitchWorking ? '处理中…' : `应用速度并保持音高${clip.appliedTimeStretchRate !== clip.timeStretchRate ? ' *' : ''}`}</button>
     <label title="片段音量"><Volume2/><span>音量</span><PreciseRange ariaLabel="当前片段音量" min={0} max={2} step={.01} value={clip.volume} onChange={volume => onChange({ volume })}/><output>{Math.round(clip.volume * 100)}%</output></label>
     <div className="clip-number-grid">
       <label>时间线位置<input type="number" min="0" step="0.01" value={clip.start.toFixed(2)} onChange={event => onChange({ start: Math.max(0, Number(event.target.value) || 0) })}/><small>秒</small></label>

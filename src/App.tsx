@@ -3,7 +3,7 @@ import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, P
 import { bufferToWav, extractChannel, formatTime, processChannels, renderBuffer, separateStereo, transformRange, type ChannelProcessOptions, type EditSettings } from './audio'
 import TranscriptPanel from './TranscriptPanel'
 import { mergeTranscriptSegments, parseVtt, type TranscriptSegment } from './transcript'
-import { convertWav, extractAudioFromVideo, pitchShiftWav, type AudioExportFormat } from './media'
+import { convertWav, extractAudioFromVideo, pitchShiftWav, transformPitchAndTempoWav, type AudioExportFormat } from './media'
 import { useTrackStore } from './useTrackStore'
 import TrackControls from './TrackControls'
 import ClipControls from './ClipControls'
@@ -32,6 +32,7 @@ import './volume-envelope.css'
 import AudioEffectsPanel from './AudioEffectsPanel'
 import './audio-effects.css'
 import { defaultAudioEffects } from './audio-effects'
+import './speed-pitch.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -341,19 +342,20 @@ export default function App() {
     } catch { setStatus('歌曲变调失败，请尝试 WAV 文件或较短的片段') }
     finally { setPitchWorkingId('') }
   }
-  const applySelectedClipPitch = async () => {
+  const applySelectedClipTransform = async () => {
     if (!selectedClip || pitchWorkingId) return
     const trackId = trackStore.activeId, workingKey = `${trackId}:${selectedClip.id}`
     try {
-      setPitchWorkingId(workingKey); mixerPlayback.stop(); setStatus(selectedClip.pitchSemitones ? `正在给当前片段应用 ${selectedClip.pitchSemitones > 0 ? '+' : ''}${selectedClip.pitchSemitones} 半音…` : '正在恢复当前片段原音高…')
+      setPitchWorkingId(workingKey); mixerPlayback.stop(); setStatus(`正在分离处理：速度 ${(selectedClip.timeStretchRate || 1).toFixed(2)}× 保持音高，音高 ${selectedClip.pitchSemitones > 0 ? '+' : ''}${selectedClip.pitchSemitones} 半音保持时长…`)
       const original = selectedClip.originalBuffer || renderBuffer(selectedClip.buffer, { start: selectedClip.offset, end: selectedClip.offset + selectedClip.duration, gain: 1, fadeIn: 0, fadeOut: 0 })
-      const processed = selectedClip.pitchSemitones ? await pitchShiftWav(bufferToWav(original), selectedClip.pitchSemitones, original.sampleRate) : bufferToWav(original)
+      const tempo = selectedClip.timeStretchRate || 1, processed = await transformPitchAndTempoWav(bufferToWav(original), selectedClip.pitchSemitones, tempo, original.sampleRate)
       const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
       const decoded = await ctx.decodeAudioData(await processed.arrayBuffer())
-      trackStore.updateClip(trackId, selectedClip.id, { buffer: decoded, offset: 0, duration: decoded.duration, originalBuffer: original })
-      setStatus(selectedClip.pitchSemitones ? '当前片段音高已应用，其他片段不受影响' : '当前片段已恢复原音高')
-    } catch { setStatus('当前片段音高处理失败，请尝试较短的 WAV 片段') } finally { setPitchWorkingId('') }
+      trackStore.updateClip(trackId, selectedClip.id, { buffer: decoded, offset: 0, duration: decoded.duration, playbackRate: 1, originalBuffer: original, appliedTimeStretchRate: tempo })
+      setStatus(`片段处理完成：速度 ${tempo.toFixed(2)}×保持音高；音高 ${selectedClip.pitchSemitones > 0 ? '+' : ''}${selectedClip.pitchSemitones} 半音保持时长`)
+    } catch { setStatus('速度与音高分离处理失败，请尝试较短的 WAV 片段') } finally { setPitchWorkingId('') }
   }
+  const applySelectedClipPitch = () => applySelectedClipTransform()
   const createCrossfade = () => {
     if (!selectedClip) return setStatus('请先选择要交叉淡化的片段')
     const track = trackStore.activeTrack, rate = track.playbackRate * track.clipPlaybackRate

@@ -81,7 +81,7 @@ export function deserializeProject(project: StoredProject): { tracks: MixerTrack
         const { bufferId: clipBufferId, originalBufferId: originalClipBufferId, ...clipSettings } = storedClip
         const buffer = buffers.get(clipBufferId)
         if (!buffer) throw new Error('工程音频数据不完整')
-        return { ...clipSettings, volumeEnvelope: clipSettings.volumeEnvelope || [], effects: clipSettings.effects || defaultAudioEffects(), buffer, originalBuffer: originalClipBufferId ? buffers.get(originalClipBufferId) : undefined }
+        return { ...clipSettings, timeStretchRate: clipSettings.timeStretchRate || 1, appliedTimeStretchRate: clipSettings.appliedTimeStretchRate || 1, volumeEnvelope: clipSettings.volumeEnvelope || [], effects: clipSettings.effects || defaultAudioEffects(), buffer, originalBuffer: originalClipBufferId ? buffers.get(originalClipBufferId) : undefined }
       }),
     } satisfies MixerTrack
   })

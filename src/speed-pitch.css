@@ -1,0 +1,1 @@
+.clip-controls .apply-stretch{height:30px;color:#082124;background:#68ddd6;border-radius:4px;font-size:9px;font-weight:800}.clip-controls .apply-stretch:hover:not(:disabled){background:#91f5ef}.clip-controls .apply-stretch:disabled{opacity:.45}.clip-pitch{position:relative}.clip-pitch::before{content:"音高处理保持片段时长不变";display:block;margin-bottom:6px;color:#6f8994;font-size:8px}

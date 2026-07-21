@@ -65,3 +65,15 @@ export async function pitchShiftWav(wav: Blob, semitones: number, sampleRate = 4
     return new Blob([data.slice().buffer], { type: 'audio/wav' })
   } finally { await ffmpeg.deleteFile(input).catch(() => undefined); await ffmpeg.deleteFile(output).catch(() => undefined) }
 }
+
+const atempoChain = (rate: number) => { const values: number[] = []; let remaining = rate; while (remaining > 2) { values.push(2); remaining /= 2 } while (remaining < .5) { values.push(.5); remaining /= .5 } values.push(remaining); return values.map(value => `atempo=${value.toFixed(8)}`) }
+
+export async function transformPitchAndTempoWav(wav: Blob, semitones: number, tempo: number, sampleRate = 44100) {
+  if (Math.abs(semitones) < .01 && Math.abs(tempo - 1) < .001) return wav
+  const ffmpeg = await getFFmpeg(), id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, input = `transform-${id}.wav`, output = `transformed-${id}.wav`, filters: string[] = []
+  if (Math.abs(semitones) >= .01) { const factor = 2 ** (semitones / 12); filters.push(`asetrate=${sampleRate}*${factor.toFixed(8)}`, `aresample=${sampleRate}`, ...atempoChain(1 / factor)) }
+  if (Math.abs(tempo - 1) >= .001) filters.push(...atempoChain(tempo))
+  await ffmpeg.writeFile(input, await fetchFile(wav))
+  try { await ffmpeg.exec(['-i', input, '-af', filters.join(','), '-ar', String(sampleRate), '-acodec', 'pcm_s16le', output]); const data = await ffmpeg.readFile(output); if (typeof data === 'string') throw new Error('速度与音高处理失败'); return new Blob([data.slice().buffer], { type: 'audio/wav' }) }
+  finally { await ffmpeg.deleteFile(input).catch(() => undefined); await ffmpeg.deleteFile(output).catch(() => undefined) }
+}
