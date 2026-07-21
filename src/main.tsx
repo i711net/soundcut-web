@@ -15,5 +15,6 @@ import './effects-controls.css'
 import './pitch-stems.css'
 import './capture-dialog.css'
 import './audio-edit-toolbar.css'
+import './clip-lane.css'
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)

@@ -45,13 +45,31 @@ export function insertBuffer(source: AudioBuffer, fragment: AudioBuffer, at: num
   return output
 }
 
+export function placeBuffer(source: AudioBuffer, fragment: AudioBuffer, at: number): AudioBuffer {
+  const position = Math.max(0, Math.round(at * source.sampleRate)), fragmentLength = Math.max(1, Math.round(fragment.duration * source.sampleRate))
+  const channels = Math.max(source.numberOfChannels, fragment.numberOfChannels), length = Math.max(source.length, position + fragmentLength)
+  const output = new AudioBuffer({ length, numberOfChannels: channels, sampleRate: source.sampleRate })
+  for (let c = 0; c < channels; c++) {
+    const target = output.getChannelData(c), input = source.getChannelData(Math.min(c, source.numberOfChannels - 1)), addition = fragment.getChannelData(Math.min(c, fragment.numberOfChannels - 1))
+    target.set(input)
+    for (let i = 0; i < fragmentLength; i++) target[position + i] = addition[Math.min(addition.length - 1, Math.floor(i * fragment.sampleRate / source.sampleRate))] || 0
+  }
+  return output
+}
+
 export function moveRange(source: AudioBuffer, from: number, to: number, newStart: number): AudioBuffer {
   const start = Math.max(0, Math.min(source.duration, from)), end = Math.max(start, Math.min(source.duration, to)), duration = end - start
   if (duration < .001) return source
   const target = Math.max(0, Math.min(source.duration - duration, newStart))
   if (Math.abs(target - start) < .001) return source
   const fragment = renderBuffer(source, { start, end, gain: 1, fadeIn: 0, fadeOut: 0 })
-  return insertBuffer(removeRange(source, start, end), fragment, target)
+  const output = new AudioBuffer({ length: source.length, numberOfChannels: source.numberOfChannels, sampleRate: source.sampleRate })
+  for (let c = 0; c < source.numberOfChannels; c++) {
+    const input = source.getChannelData(c), result = output.getChannelData(c), moved = fragment.getChannelData(Math.min(c, fragment.numberOfChannels - 1)), fromFrame = Math.floor(start * source.sampleRate), toFrame = Math.ceil(end * source.sampleRate), targetFrame = Math.round(target * source.sampleRate)
+    result.set(input); result.fill(0, fromFrame, toFrame)
+    for (let i = 0; i < moved.length && targetFrame + i < result.length; i++) result[targetFrame + i] = moved[i]
+  }
+  return output
 }
 
 export function transformRange(source: AudioBuffer, from: number, to: number, mode: 'silence' | 'reverse' | 'normalize' | 'fadeIn' | 'fadeOut'): AudioBuffer {

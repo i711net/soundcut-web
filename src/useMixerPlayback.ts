@@ -23,12 +23,17 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     if (!playable.length) return
     offset.current = Math.max(0, Math.min(time, duration)); startedAt.current = audioContext.currentTime
     for (const track of playable) {
-      const rate = trackRate(track, masterRate), bufferOffset = offset.current * rate
-      if (!track.buffer || bufferOffset >= track.buffer.duration) continue
-      const node = audioContext.createBufferSource(), gain = audioContext.createGain()
-      node.buffer = track.buffer; node.playbackRate.value = rate; gain.gain.value = track.volume * track.clipVolume * masterVolume
-      connectVoiceEffects(audioContext, node, gain, [track.voicePreset, track.clipVoicePreset]); gain.connect(audioContext.destination); node.start(0, bufferOffset)
-      nodes.current.set(track.id, node); gains.current.set(track.id, gain)
+      const clips = track.clips.length ? track.clips : track.buffer ? [{ id: `${track.id}-legacy`, buffer: track.buffer, start: 0, offset: 0, duration: track.buffer.duration, volume: 1, playbackRate: 1 }] : []
+      for (const clip of clips) {
+        const rate = trackRate(track, masterRate) * clip.playbackRate, clipEnd = clip.start + clip.duration / rate
+        if (offset.current >= clipEnd) continue
+        const delay = Math.max(0, clip.start - offset.current), elapsed = Math.max(0, offset.current - clip.start), bufferOffset = clip.offset + elapsed * rate
+        if (bufferOffset >= clip.offset + clip.duration) continue
+        const node = audioContext.createBufferSource(), gain = audioContext.createGain(), key = `${track.id}:${clip.id}`
+        node.buffer = clip.buffer; node.playbackRate.value = rate; gain.gain.value = track.volume * track.clipVolume * clip.volume * masterVolume
+        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, track.clipVoicePreset]); gain.connect(audioContext.destination); node.start(audioContext.currentTime + delay, bufferOffset, clip.offset + clip.duration - bufferOffset)
+        node.onended = () => nodes.current.delete(key); nodes.current.set(key, node); gains.current.set(key, gain)
+      }
     }
     setPlaying(true)
     const tick = () => {
@@ -42,10 +47,12 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   useEffect(() => {
     const audible = new Set(audibleTracks(tracks).map(track => track.id))
     for (const track of tracks) {
-      const gain = gains.current.get(track.id)
-      if (gain) gain.gain.setTargetAtTime(audible.has(track.id) ? track.volume * track.clipVolume * masterVolume : 0, gain.context.currentTime, .01)
-      const node = nodes.current.get(track.id)
-      if (node) node.playbackRate.setTargetAtTime(trackRate(track, masterRate), node.context.currentTime, .01)
+      for (const clip of track.clips) {
+        const key = `${track.id}:${clip.id}`, gain = gains.current.get(key)
+        if (gain) gain.gain.setTargetAtTime(audible.has(track.id) ? track.volume * track.clipVolume * clip.volume * masterVolume : 0, gain.context.currentTime, .01)
+        const node = nodes.current.get(key)
+        if (node) node.playbackRate.setTargetAtTime(trackRate(track, masterRate) * clip.playbackRate, node.context.currentTime, .01)
+      }
     }
   }, [masterRate, masterVolume, tracks])
 
