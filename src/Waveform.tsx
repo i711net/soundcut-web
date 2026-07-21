@@ -47,8 +47,14 @@ export default function Waveform({ buffer, selection, currentTime, marks = [], o
     const rect = canvas.current!.getBoundingClientRect()
     return Math.max(0, Math.min(duration, (event.clientX - rect.left) / rect.width * duration))
   }
-  return <canvas ref={canvas} className="waveform" aria-label="音频波形，可拖动选择剪辑范围"
-    onPointerDown={e => { const time = timeAt(e); setDragStart(time); onSelection([time, time]); canvas.current?.setPointerCapture(e.pointerId) }}
-    onPointerMove={e => { if (dragStart === null) return; const time = timeAt(e); onSelection([Math.min(dragStart, time), Math.max(dragStart, time)]) }}
-    onPointerUp={e => { const time = timeAt(e); if (dragStart !== null && Math.abs(time - dragStart) < .05) onSeek(time); setDragStart(null) }} />
+  const selectedDuration = Math.max(0, selection[1] - selection[0])
+  return <div className={`waveform-shell ${dragStart !== null ? 'drag-selecting' : ''}`}>
+    <canvas ref={canvas} className="waveform" aria-label="按住鼠标左键并拖动，选择需要剪切的音频范围"
+      onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); const time = timeAt(e); setDragStart(time); onSelection([time, time]); canvas.current?.setPointerCapture(e.pointerId) }}
+      onPointerMove={e => { if (dragStart === null) return; e.preventDefault(); const time = timeAt(e); onSelection([Math.min(dragStart, time), Math.max(dragStart, time)]) }}
+      onPointerUp={e => { const time = timeAt(e); if (dragStart !== null && Math.abs(time - dragStart) < .05) onSeek(time); if (canvas.current?.hasPointerCapture(e.pointerId)) canvas.current.releasePointerCapture(e.pointerId); setDragStart(null) }}
+      onPointerCancel={() => setDragStart(null)}/>
+    {dragStart !== null && <div className="drag-selection-tip"><strong>正在选择剪切区域</strong><span>{selectedDuration.toFixed(3)} 秒</span></div>}
+    {dragStart === null && selectedDuration >= .01 && selectedDuration < duration - .01 && <div className="selection-ready-tip">已选择 {selectedDuration.toFixed(3)} 秒 · 点击上方“剪切”</div>}
+  </div>
 }
