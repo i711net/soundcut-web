@@ -38,6 +38,7 @@ export default function App() {
   const [channelMix, setChannelMix] = useState({ leftGain: 1, rightGain: 1, pan: 0 })
   const [snapEnabled, setSnapEnabled] = useState(true)
   const [snapGap, setSnapGap] = useState(0)
+  const [timelinePadding, setTimelinePadding] = useState(60)
   const [currentTime, setCurrentTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [settings, setSettings] = useState<EditSettings>({ start: 0, end: 0, gain: 1, fadeIn: 0, fadeOut: 0 })
@@ -82,7 +83,7 @@ export default function App() {
   const skipBufferSync = useRef(false)
   const resumeAfterPitch = useRef<{ trackId: string; semitones: number; time: number } | null>(null)
   const mixerPlayback = useMixerPlayback(trackStore.tracks, speed, masterVolume, time => { currentTimeRef.current = time; setCurrentTime(time) })
-  const timelineDuration = Math.max(120, mixerPlayback.duration)
+  const timelineDuration = Math.max(120, mixerPlayback.duration + timelinePadding)
   const rulerLabelStep = timelineDuration <= 120 ? 5 : timelineDuration <= 300 ? 15 : timelineDuration <= 600 ? 30 : timelineDuration <= 1200 ? 60 : 120
   const videoTrackForPlayback = trackStore.tracks.find(track => track.id === 'video-1')
   const shouldSyncVideoPlayback = !!videoUrl && !!videoTrackForPlayback?.clips.length && !videoTrackForPlayback.muted
@@ -408,6 +409,16 @@ export default function App() {
       const nearest = candidates.reduce<number | null>((best, value) => best === null || Math.abs(value - start) < Math.abs(best - start) ? value : best, null)
       if (nearest !== null) { finalStart = nearest; snapped = true }
     }
+    if (clip && targetTrack) {
+      const targetRate = targetTrack.playbackRate * targetTrack.clipPlaybackRate, length = clip.duration / (targetRate * clip.playbackRate)
+      const others = targetTrack.clips.filter(item => item.id !== clipId).map(item => ({ start: item.start, end: item.start + item.duration / (targetRate * item.playbackRate) }))
+      const collides = (at: number) => others.some(item => at < item.end - .001 && at + length > item.start + .001)
+      if (collides(finalStart)) {
+        const safeCandidates = [0, ...others.flatMap(item => [item.end + (snapEnabled ? snapGap : 0), item.start - length - (snapEnabled ? snapGap : 0)])].filter(at => at >= 0 && !collides(at))
+        const nearestSafe = safeCandidates.reduce<number | null>((best, at) => best === null || Math.abs(at - start) < Math.abs(best - start) ? at : best, null)
+        if (nearestSafe !== null) { finalStart = nearestSafe; snapped = snapEnabled }
+      }
+    }
     remember(); trackStore.moveClipToTrack(clipId, targetTrackId, finalStart); trackStore.setActiveId(targetTrackId); setStatus(snapped ? `片段已磁吸连接，间隔 ${snapGap.toFixed(2)} 秒` : `片段已移动到目标音轨的 ${formatTime(finalStart, true)}`)
   }
   const trimTimelineClip = (clipId: string, patch: Partial<import('./mixer').AudioClip>) => { trackStore.updateClip(trackStore.activeId, clipId, patch); setStatus('正在调整片段入点或出点') }
@@ -477,7 +488,7 @@ export default function App() {
       <section className="workspace">
         <AudioEditToolbar disabled={!trackStore.activeTrack.clips.length} canPaste={!!audioClipboard} onCut={cutSelection} onCopy={copySelection} onPaste={pasteAudio} onDelete={deleteSelection} onTrim={keepSelection} onSplit={splitAtPlayhead} onDuplicate={duplicateSelectionToTrack} onImport={() => fragmentInput.current?.click()} onMerge={() => void mergeSelectedTracks()} onSilence={() => transformSelection('silence', '静音')} onReverse={() => transformSelection('reverse', '反转')} onNormalize={() => transformSelection('normalize', '标准化')} onFadeIn={() => transformSelection('fadeIn', '淡入')} onFadeOut={() => transformSelection('fadeOut', '淡出')} effectScope={effectScope} voicePreset={pendingVoicePreset} pitchSemitones={activePitchSemitones} onEffectScope={setEffectScope} onVoicePreset={setPendingVoicePreset} onApplyVoice={() => void confirmVoicePreset()} onRestoreVoice={restoreOriginalVoice} onPitchSemitones={changePitchSemitones} onApplyPitch={() => void applyCentralPitch()}/>
         <ChannelEditor disabled={!selectedClip} channels={selectedClip?.buffer.numberOfChannels || 0} leftGain={channelMix.leftGain} rightGain={channelMix.rightGain} pan={channelMix.pan} onLeftGain={leftGain => setChannelMix(value => ({ ...value, leftGain }))} onRightGain={rightGain => setChannelMix(value => ({ ...value, rightGain }))} onPan={pan => setChannelMix(value => ({ ...value, pan }))} onApply={() => applyChannelProcess({}, '左右音量与声像')} onAction={channelAction}/>
-        <div className="master-controls"><strong>总控</strong><label>速度<PreciseRange ariaLabel="总速度" min={.5} max={2} step={.05} value={speed} onChange={setSpeed}/><output>{speed.toFixed(2)}×</output></label><label>主音量<PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/><output>{Math.round(masterVolume * 100)}%</output></label><button className={`snap-toggle ${snapEnabled ? 'active' : ''}`} onClick={() => setSnapEnabled(value => !value)}>{snapEnabled ? '磁吸连接：开' : '磁吸连接：关'}</button><label className="snap-gap">片段间隔<PreciseRange ariaLabel="磁吸间隔秒数" min={0} max={5} step={.05} value={snapGap} onChange={setSnapGap}/><output>{snapGap.toFixed(2)}s</output></label><button className={`compact-tracks-toggle ${compactTracks ? 'active' : ''}`} onClick={() => setCompactTracks(value => !value)}>{compactTracks ? '紧凑轨道' : '标准轨道'}</button></div>
+        <div className="master-controls"><strong>总控</strong><label>速度<PreciseRange ariaLabel="总速度" min={.5} max={2} step={.05} value={speed} onChange={setSpeed}/><output>{speed.toFixed(2)}×</output></label><label>主音量<PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/><output>{Math.round(masterVolume * 100)}%</output></label><button className={`snap-toggle ${snapEnabled ? 'active' : ''}`} onClick={() => setSnapEnabled(value => !value)}>{snapEnabled ? '磁吸连接：开' : '磁吸连接：关'}</button><label className="snap-gap">片段间隔<PreciseRange ariaLabel="磁吸间隔秒数" min={0} max={5} step={.05} value={snapGap} onChange={setSnapGap}/><output>{snapGap.toFixed(2)}s</output></label><button className="extend-timeline" onClick={() => { setTimelinePadding(value => value + 30); setStatus('时间线已向右延长30秒') }}>延长时间线＋30秒</button><button className={`compact-tracks-toggle ${compactTracks ? 'active' : ''}`} onClick={() => setCompactTracks(value => !value)}>{compactTracks ? '紧凑轨道' : '标准轨道'}</button></div>
         <div className={`timeline-body ${compactTracks ? 'compact' : ''}`} ref={timelineBodyRef} style={{ '--one-second-step': `${1 / timelineDuration * 100}%`, '--five-second-step': `${5 / timelineDuration * 100}%` } as React.CSSProperties}>
         <div className="ruler draggable-ruler" title="按住并拖动以精确定位播放头" style={{ '--ruler-label-step': `${rulerLabelStep / timelineDuration * 100}%` } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}>{Array.from({length: Math.floor(timelineDuration / rulerLabelStep) + 1}, (_, i) => <span key={i}>{formatTime(i * rulerLabelStep)}</span>)}</div>
         <div className="timeline-playhead" style={{ '--playhead': playheadPercent } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}><span>{formatTime(currentTime, true)}</span></div>
