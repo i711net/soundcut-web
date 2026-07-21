@@ -181,12 +181,22 @@ export default function App() {
   }
   const handleMicrophoneButton = () => {
     if (recording) { void toggleRecording(); return }
+    if (window.self !== window.top) {
+      const opened = window.open(window.location.href, 'soundcut-microphone', 'popup=yes,width=1280,height=820')
+      const message = opened ? '已打开 SoundCut 独立录音窗口，请在新窗口中点击“麦克风录音”并允许权限。' : '浏览器阻止了录音窗口，请允许本站弹出窗口后重试。'
+      setStatus(message); if (!opened) { setMicError(message); setMicState('error') }
+      return
+    }
     const allowed = window.confirm('是否允许“声刻 SoundCut”使用麦克风进行录音？\n\n点击“确定”后，请在浏览器的麦克风权限窗口中继续选择“允许”。')
     if (!allowed) { setMicState('idle'); setStatus('已取消麦克风录音'); return }
     setMicState('requesting'); setStatus('正在等待浏览器麦克风权限…'); void toggleRecording(true)
   }
   const retryMicrophonePermission = async () => {
     setMicError(''); setStatus('正在检查麦克风权限…')
+    if (window.self !== window.top) {
+      const message = '当前是内嵌预览，浏览器不会向它开放麦克风。请点击下方“打开独立录音窗口”，不要继续重复申请。'
+      setMicError(message); setMicState('error'); setStatus(message); return
+    }
     try {
       const permissions = navigator.permissions as Permissions & { query: (descriptor: PermissionDescriptor | { name: 'microphone' }) => Promise<PermissionStatus> }
       const permission = await permissions.query({ name: 'microphone' })
@@ -198,6 +208,10 @@ export default function App() {
     } catch {
       setMicState('confirm'); setStatus('请再次确认，软件将重新申请麦克风权限')
     }
+  }
+  const openStandaloneRecorder = () => {
+    const opened = window.open(window.location.href, 'soundcut-microphone', 'popup=yes,width=1280,height=820')
+    if (!opened) setStatus('弹出窗口被浏览器阻止，请允许本站弹出窗口后重试')
   }
   const resetScreenRecording = () => {
     clearInterval(screenTimer.current); screenStream.current?.getTracks().forEach(track => track.stop()); screenStream.current = null; screenRecorder.current = null
@@ -493,7 +507,7 @@ export default function App() {
         </div> : <TranscriptPanel fileName={fileName} hasAudio={!!trackStore.activeTrack.buffer} language={language} onLanguage={setLanguage} contentMode={contentMode} onContentMode={setContentMode} segments={transcript} onSegments={setTranscript} onSeek={seek} onTranscribe={transcribe} progress={transcriptionProgress} working={transcribing} error={transcriptionError}/>} 
       </aside>
     </main>
-    {micState !== 'idle' && <div className="capture-overlay mic-overlay"><section className="capture-dialog mic-dialog" role="dialog" aria-modal="true" aria-label="麦克风录音"><div className="capture-heading"><div className={`capture-icon ${recording ? 'live' : ''}`}><Mic/></div><div><h2>麦克风录音</h2><p>{micState === 'confirm' ? '是否允许本软件使用麦克风？确认后浏览器会再显示一次系统权限询问。' : micState === 'requesting' ? '请在浏览器弹出的权限询问中选择“允许”。' : micState === 'recording' ? '正在录制，结束后会自动加入新的音频轨道。' : micError}</p></div></div>{micState === 'recording' && <div className="recording-clock"><i/>{formatTime(recordingSeconds, true)}</div>}<div className="capture-actions">{micState === 'recording' ? <button className="danger" onClick={() => void toggleRecording(true)}><Square fill="currentColor"/>停止并加入音轨</button> : micState === 'confirm' ? <><button onClick={() => setMicState('idle')}>暂不录音</button><button className="primary" onClick={() => void toggleRecording(true)}><Mic/>允许并开始录音</button></> : micState === 'error' ? <><button onClick={() => setMicState('idle')}>关闭</button><button className="primary" onClick={() => void retryMicrophonePermission()}><Mic/>检查并重新申请</button></> : <button onClick={() => setMicState('idle')}>隐藏窗口</button>}</div></section></div>}
+    {micState !== 'idle' && <div className="capture-overlay mic-overlay"><section className="capture-dialog mic-dialog" role="dialog" aria-modal="true" aria-label="麦克风录音"><div className="capture-heading"><div className={`capture-icon ${recording ? 'live' : ''}`}><Mic/></div><div><h2>麦克风录音</h2><p>{micState === 'confirm' ? '是否允许本软件使用麦克风？确认后浏览器会再显示一次系统权限询问。' : micState === 'requesting' ? '请在浏览器弹出的权限询问中选择“允许”。' : micState === 'recording' ? '正在录制，结束后会自动加入新的音频轨道。' : micError}</p></div></div>{micState === 'recording' && <div className="recording-clock"><i/>{formatTime(recordingSeconds, true)}</div>}<div className="capture-actions">{micState === 'recording' ? <button className="danger" onClick={() => void toggleRecording(true)}><Square fill="currentColor"/>停止并加入音轨</button> : micState === 'confirm' ? <><button onClick={() => setMicState('idle')}>暂不录音</button><button className="primary" onClick={() => void toggleRecording(true)}><Mic/>允许并开始录音</button></> : micState === 'error' ? <><button onClick={() => setMicState('idle')}>关闭</button>{window.self !== window.top ? <button className="primary" onClick={openStandaloneRecorder}><Mic/>打开独立录音窗口</button> : <button className="primary" onClick={() => void retryMicrophonePermission()}><Mic/>检测权限是否已修改</button>}</> : <button onClick={() => setMicState('idle')}>隐藏窗口</button>}</div></section></div>}
     {screenStage !== 'idle' && <div className="capture-overlay"><section className="capture-dialog" role="dialog" aria-modal="true" aria-label="屏幕录制"><div className="capture-title"><div><h2>屏幕录制</h2><p>{screenStage === 'selecting' ? '请在浏览器弹窗中选择屏幕、窗口或标签页' : screenStage === 'ready' ? '预录制状态：先播放要录制的内容，再点击开始录制' : screenStage === 'recording' ? '正在录制共享画面' : screenStage === 'finished' ? '录制完成，可以保存或导入剪辑' : screenError}</p></div><span className={`stage-badge ${screenStage}`}>{screenStage === 'selecting' ? '选择来源' : screenStage === 'ready' ? '预录制' : screenStage === 'recording' ? `录制中 ${formatTime(screenRecordingSeconds)}` : screenStage === 'finished' ? '已完成' : '发生错误'}</span></div><div className="capture-preview">{screenStage === 'finished' && screenRecordingUrl ? <video src={screenRecordingUrl} controls playsInline/> : screenStage === 'ready' || screenStage === 'recording' ? <><video ref={attachScreenPreview} muted autoPlay playsInline onLoadedData={event => { setScreenPreviewPlaying(true); void event.currentTarget.play().catch(() => setScreenPreviewPlaying(false)) }}/>{!screenPreviewPlaying && <button className="start-screen-preview" onClick={() => attachScreenPreview(screenPreview.current)}><Play/>显示共享画面</button>}</> : <div className="capture-placeholder"><MonitorUp/><span>{screenStage === 'selecting' ? '等待选择录制来源…' : screenError}</span></div>}</div><div className="capture-note">提示：录制网页视频时优先选择“浏览器标签页”，并在共享弹窗中开启“同时共享标签页音频”。</div><div className="capture-actions">{screenStage === 'ready' && <><button onClick={resetScreenRecording}>取消</button><button className="primary" onClick={startScreenRecording}><span className="record-dot"/>开始录制</button></>}{screenStage === 'recording' && <button className="danger" onClick={stopScreenRecording}><Square fill="currentColor"/>停止录制</button>}{screenStage === 'finished' && <><button onClick={resetScreenRecording}>关闭</button><button onClick={saveScreenRecording}><Download/>保存视频</button><button className="primary" onClick={importScreenRecording}><Video/>导入剪辑</button></>}{screenStage === 'error' && <><button onClick={resetScreenRecording}>关闭</button><button className="primary" onClick={() => { resetScreenRecording(); window.setTimeout(() => void prepareScreenRecording(), 0) }}><MonitorUp/>重新选择</button></>}</div></section></div>}
     <footer><div className="time"><strong>{formatTime(currentTime, true)}</strong><span>/ {formatTime(mixerPlayback.duration, true)}</span></div><div className="transport"><button onClick={() => seek(Math.max(0, currentTime - 5))}><SkipBack/></button><button className="play" onClick={toggleMixerPlayback}>{mixerPlayback.playing ? <Pause fill="currentColor"/> : <Play fill="currentColor"/>}</button><button onClick={() => seek(Math.min(mixerPlayback.duration, currentTime + 5))}><SkipForward/></button></div><div className="zoom"><ZoomOut/><input type="range" defaultValue="60"/><ZoomIn/></div><div className="status"><RotateCcw/>{status}</div></footer>
   </div>
