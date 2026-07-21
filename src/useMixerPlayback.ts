@@ -15,6 +15,8 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     gains.current.forEach(gain => { try { gain.gain.cancelScheduledValues(gain.context.currentTime); gain.gain.setValueAtTime(0, gain.context.currentTime); gain.disconnect() } catch { /* disconnected */ } })
     nodes.current.forEach(node => { try { node.stop(); node.disconnect() } catch { /* ended */ } })
     nodes.current.clear(); gains.current.clear(); cancelAnimationFrame(frame.current); setPlaying(false)
+    const oldContext = context.current; context.current = null
+    if (oldContext && oldContext.state !== 'closed') void oldContext.close().catch(() => undefined)
   }, [])
 
   const playFrom = useCallback(async (time: number) => {

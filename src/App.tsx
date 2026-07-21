@@ -290,7 +290,7 @@ export default function App() {
     else setStatus('播放头位置已更新；点击主播放键后播放')
   }
   const toggleMixerPlayback = async () => {
-    if (mixerPlayback.playing) { mixerPlayback.stop(); videoElement.current?.pause(); return }
+    if (mixerPlayback.playing || (videoElement.current && !videoElement.current.paused)) { mixerPlayback.stop(); stop(); videoElement.current?.pause(); setPlaying(false); setStatus('播放已停止'); return }
     await mixerPlayback.playFrom(currentTimeRef.current)
     if (videoElement.current) { videoElement.current.currentTime = currentTimeRef.current; videoElement.current.playbackRate = speed; void videoElement.current.play().catch(() => undefined) }
   }
@@ -351,12 +351,12 @@ export default function App() {
   const selectedVisibleBuffer = () => selectedClip ? renderBuffer(selectedClip.buffer, { start: selectedClip.offset, end: selectedClip.offset + selectedClip.duration, gain: 1, fadeIn: 0, fadeOut: 0 }) : null
   const applyChannelProcess = (options: Partial<ChannelProcessOptions>, label: string) => {
     const source = selectedVisibleBuffer(); if (!selectedClip || !source) return setStatus('请先选择需要编辑声道的音频片段')
-    remember(); mixerPlayback.stop(); const processed = processChannels(source, { leftGain: channelMix.leftGain, rightGain: channelMix.rightGain, pan: channelMix.pan, ...options })
+    remember(); mixerPlayback.stop(); stop(); videoElement.current?.pause(); setPlaying(false); const processed = processChannels(source, { leftGain: channelMix.leftGain, rightGain: channelMix.rightGain, pan: channelMix.pan, ...options })
     trackStore.updateClip(trackStore.activeId, selectedClip.id, { buffer: processed, offset: 0, duration: processed.duration }); setStatus(`已应用声道处理：${label}`)
   }
   const channelAction = (action: 'swap' | 'muteLeft' | 'muteRight' | 'invertLeft' | 'invertRight' | 'mono' | 'stereo' | 'extractLeft' | 'extractRight') => {
     const source = selectedVisibleBuffer(); if (!selectedClip || !source) return setStatus('请先选择需要编辑声道的音频片段')
-    if (action === 'extractLeft' || action === 'extractRight') { remember(); const side = action === 'extractLeft' ? 0 : 1, extracted = extractChannel(source, side); trackStore.addTrack(extracted, `${selectedClip.name} · ${side ? '右' : '左'}声道`); setStatus(`${side ? '右' : '左'}声道已提取为新的独立音轨`); return }
+    if (action === 'extractLeft' || action === 'extractRight') { remember(); mixerPlayback.stop(); stop(); videoElement.current?.pause(); const side = action === 'extractLeft' ? 0 : 1, extracted = extractChannel(source, side); trackStore.addTrack(extracted, `${selectedClip.name} · ${side ? '右' : '左'}声道`); setStatus(`${side ? '右' : '左'}声道已提取为新的独立音轨`); return }
     const map: Record<Exclude<typeof action, 'extractLeft' | 'extractRight'>, [Partial<ChannelProcessOptions>, string]> = { swap: [{ swap: true }, '交换左右声道'], muteLeft: [{ muteLeft: true }, '静音左声道'], muteRight: [{ muteRight: true }, '静音右声道'], invertLeft: [{ invertLeft: true }, '左声道相位反转'], invertRight: [{ invertRight: true }, '右声道相位反转'], mono: [{ mono: true }, '立体声转单声道'], stereo: [{ forceStereo: true }, '复制成立体声'] }
     const [options, label] = map[action]; applyChannelProcess(options, label)
   }
