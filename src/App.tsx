@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, Rewind, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText, Video, Plus, CopyPlus, Headphones, Square, MonitorUp, UserRound, AudioLines } from 'lucide-react'
+import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, Rewind, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText, Video, Plus, CopyPlus, Headphones, Square, MonitorUp, UserRound, AudioLines, Save, FolderOpen } from 'lucide-react'
 import { bufferToWav, extractChannel, formatTime, processChannels, renderBuffer, separateStereo, transformRange, type ChannelProcessOptions, type EditSettings } from './audio'
 import TranscriptPanel from './TranscriptPanel'
 import { mergeTranscriptSegments, parseVtt, type TranscriptSegment } from './transcript'
@@ -24,6 +24,7 @@ import PreciseRange from './PreciseRange'
 import './precise-range.css'
 import './snap-controls.css'
 import './clip-inspector.css'
+import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
 
@@ -75,6 +76,8 @@ export default function App() {
   const currentTimeRef = useRef(0)
   const input = useRef<HTMLInputElement>(null)
   const fragmentInput = useRef<HTMLInputElement>(null)
+  const projectInput = useRef<HTMLInputElement>(null)
+  const projectReady = useRef(false)
   const timelineBodyRef = useRef<HTMLDivElement | null>(null), playheadDrag = useRef({ active: false, resume: false })
   const screenRecorder = useRef<MediaRecorder | null>(null), screenStream = useRef<MediaStream | null>(null), screenChunks = useRef<Blob[]>([]), screenTimer = useRef(0)
   const screenPreview = useRef<HTMLVideoElement | null>(null), screenRecordingBlob = useRef<Blob | null>(null), screenRecordingObjectUrl = useRef('')
@@ -101,6 +104,48 @@ export default function App() {
     const restart = window.requestAnimationFrame(() => void mixerPlayback.playFrom(resumeAt))
     return () => window.cancelAnimationFrame(restart)
   }, [trackStore.tracks, mixerPlayback.playFrom])
+
+  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, compactTracks, transcript, language, contentMode, exportFormat })
+  const applyProject = (project: StoredProject, recovered = false) => {
+    mixerPlayback.stop()
+    const restored = deserializeProject(project), value = restored.settings
+    trackStore.replaceTracks(restored.tracks); trackStore.setActiveId(restored.tracks.some(track => track.id === value.activeId) ? value.activeId : restored.tracks[0]?.id || 'track-1')
+    const main = restored.tracks.find(track => track.id === 'track-1')
+    skipBufferSync.current = true; setBuffer(main?.buffer || null)
+    setFileName(value.fileName || '未命名项目'); setSelection(value.selection || [0, 0]); setSelectedClipId(value.selectedClipId || '')
+    setSpeed(value.speed || 1); setMasterVolume(value.masterVolume ?? 1); setSnapEnabled(value.snapEnabled ?? true); setSnapGap(value.snapGap || 0); setTimelinePadding(value.timelinePadding || 60); setCompactTracks(!!value.compactTracks)
+    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat)
+    setCurrentTime(0); currentTimeRef.current = 0; setHistory([]); setFuture([]); setStatus(recovered ? `已恢复自动保存：${new Date(project.savedAt).toLocaleString()}` : '工程已打开，可以继续编辑')
+  }
+  const saveProjectFile = () => {
+    try {
+      setStatus('正在整理工程音频数据…')
+      const project = serializeProject(trackStore.tracks, projectSettings()), blob = projectToBlob(project), url = URL.createObjectURL(blob), link = document.createElement('a')
+      link.href = url; link.download = `${fileName.replace(/[\\/:*?\"<>|]/g, '_') || '未命名项目'}.soundcut`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); setStatus('工程文件已保存')
+    } catch { setStatus('工程保存失败：音频可能过大，浏览器内存不足') }
+  }
+  const openProjectFile = async (file?: File) => {
+    if (!file) return
+    try { setStatus('正在读取工程文件…'); applyProject(await projectFromFile(file)) } catch { setStatus('无法打开工程：文件损坏或版本不支持') }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    void loadAutosave().then(project => {
+      if (cancelled) return
+      if (project && window.confirm(`发现 ${new Date(project.savedAt).toLocaleString()} 的自动保存工程，是否恢复？`)) applyProject(project, true)
+      projectReady.current = true
+    }).catch(() => { projectReady.current = true })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!projectReady.current || !trackStore.tracks.some(track => track.clips.length)) return
+    const timer = window.setTimeout(() => {
+      void saveAutosave(serializeProject(trackStore.tracks, projectSettings())).then(() => setStatus(current => current === '准备就绪' ? '工程已自动保存' : current)).catch(() => setStatus('自动保存失败：浏览器存储空间可能不足'))
+    }, 1800)
+    return () => window.clearTimeout(timer)
+  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, compactTracks, transcript, language, contentMode, exportFormat])
 
   const loadFile = async (file?: File) => {
     if (!file) return
@@ -482,7 +527,7 @@ export default function App() {
 
   const Tool = ({ icon, label, action, disabled = false, active = false }: { icon: React.ReactNode; label: string; action?: () => void; disabled?: boolean; active?: boolean }) => <button className={`tool ${active ? 'active' : ''}`} onClick={action} disabled={disabled}>{icon}<span>{label}</span></button>
   return <div className="app" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void openMediaToClipboard(e.dataTransfer.files[0]) }}>
-    <header><div className="brand"><span className="brand-mark"><i/><i/><i/><i/><i/></span><b>声刻</b><span>SoundCut</span></div><div className="project">{fileName}</div><div className="header-actions"><button aria-label="撤销" onClick={undo} disabled={!history.length}><Undo2/></button><button aria-label="重做" onClick={redo} disabled={!future.length}><Redo2/></button><button className="export" onClick={exportAudio} disabled={mediaWorking}><Download/> {mediaWorking ? '处理中' : '导出'}</button></div></header>
+    <header><div className="brand"><span className="brand-mark"><i/><i/><i/><i/><i/></span><b>声刻</b><span>SoundCut</span></div><div className="project">{fileName}</div><div className="header-actions"><input ref={projectInput} type="file" accept=".soundcut,application/x-soundcut-project" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void openProjectFile(file) }}/><button className="project-action" title="打开工程" aria-label="打开工程" onClick={() => projectInput.current?.click()}><FolderOpen/></button><button className="project-action" title="保存工程" aria-label="保存工程" onClick={saveProjectFile} disabled={!trackStore.tracks.some(track => track.clips.length)}><Save/></button><button aria-label="撤销" onClick={undo} disabled={!history.length}><Undo2/></button><button aria-label="重做" onClick={redo} disabled={!future.length}><Redo2/></button><button className="export" onClick={exportAudio} disabled={mediaWorking}><Download/> {mediaWorking ? '处理中' : '导出'}</button></div></header>
     <main>
       <aside className="tools"><button className="import" onClick={() => fragmentInput.current?.click()}><Upload/>导入媒体</button><input ref={input} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void loadFile(file) }}/><input ref={fragmentInput} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void openMediaToClipboard(file) }}/><div className="screen-record-config"><button className={`tool ${screenRecording ? 'recording' : ''}`} onClick={screenStage === 'recording' ? stopScreenRecording : screenStage === 'idle' || screenStage === 'error' ? prepareScreenRecording : () => undefined}><MonitorUp/><span>{screenStage === 'selecting' ? '选择录制来源…' : screenStage === 'ready' ? '预录制已就绪' : screenStage === 'recording' ? `录制中 ${formatTime(screenRecordingSeconds)}` : screenStage === 'finished' ? '录制已完成' : '录制屏幕'}</span></button><select value={captureSize} disabled={screenStage !== 'idle' && screenStage !== 'error'} onChange={e => setCaptureSize(e.target.value as typeof captureSize)} aria-label="录屏清晰度"><option value="source">原始尺寸</option><option value="720">720p</option><option value="1080">1080p</option></select></div><Tool icon={<MousePointer2/>} label={timelineTool === 'select' ? '选择中' : '选择'} active={timelineTool === 'select'} action={() => { setTimelineTool(tool => tool === 'select' ? 'move' : 'select'); setStatus(timelineTool === 'select' ? '已切回片段移动模式' : '选择模式：在音频波形上按住鼠标拖出区间') }}/><Tool icon={<Scissors/>} label="保留选区" action={keepSelection} disabled={!selectedClip}/><Tool icon={<Trash2/>} label="删除选区" action={deleteSelection} disabled={!selectedClip}/><Tool icon={<Waves/>} label="淡入 / 淡出"/><div className="tool-spacer"/><Tool icon={<Undo2/>} label="撤销" action={undo} disabled={!history.length}/><Tool icon={<Redo2/>} label="重做" action={redo} disabled={!future.length}/></aside>
       <section className="workspace">
