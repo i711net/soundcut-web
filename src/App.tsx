@@ -295,7 +295,15 @@ export default function App() {
   const keepSelection = () => { const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间'); remember(); trackStore.updateClip(trackStore.activeId, selectedClip.id, { start: range.timelineFrom, offset: range.sourceFrom, duration: range.sourceTo - range.sourceFrom }); setSelection([range.timelineFrom, range.timelineTo]); setStatus('已只保留选区，其他轨道位置保持不变') }
   const deleteSelection = () => { const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间'); remember(); trackStore.removeClipRange(trackStore.activeId, selectedClip.id, range.timelineFrom, range.timelineTo); setSelectedClipId(''); setSelection([0, 0]); setStatus('已删除选区，左右片段清楚分开，其他轨道位置不变') }
   const copySelection = () => { const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间'); const copied = renderBuffer(selectedClip.buffer, { start: range.sourceFrom, end: range.sourceTo, gain: 1, fadeIn: 0, fadeOut: 0 }); setAudioClipboard(copied); setStatus(`已复制选区：${formatTime(range.timelineTo - range.timelineFrom, true)}`) }
-  const cutSelection = () => { const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间'); remember(); const copied = renderBuffer(selectedClip.buffer, { start: range.sourceFrom, end: range.sourceTo, gain: 1, fadeIn: 0, fadeOut: 0 }); setAudioClipboard(copied); trackStore.removeClipRange(trackStore.activeId, selectedClip.id, range.timelineFrom, range.timelineTo); setSelectedClipId(''); setSelection([0, 0]); setStatus('已剪切选区，原时间位置保留空白') }
+  const cutSelection = () => {
+    const range = selectedSourceRange(); if (!selectedClip || !range) return setStatus('请先用选择工具拖出区间')
+    remember()
+    const copied = renderBuffer(selectedClip.buffer, { start: range.sourceFrom, end: range.sourceTo, gain: 1, fadeIn: 0, fadeOut: 0 })
+    setAudioClipboard(copied)
+    trackStore.splitClipRange(trackStore.activeId, selectedClip.id, range.timelineFrom, range.timelineTo)
+    setSelectedClipId('')
+    setStatus('已在选区两端完成分割，所有音频仍保留在原来的时间位置')
+  }
   const pasteAudio = () => { if (!audioClipboard) return; remember(); const trackId = trackStore.activeId, at = currentTimeRef.current; const id = trackStore.addClip(trackId, audioClipboard, '粘贴片段', at); setSelectedClipId(id); setSelection([at, at + audioClipboard.duration]); setStatus('片段已粘贴到播放头位置，不会推挤其他片段') }
   const moveTimelineClip = (clipId: string, start: number) => { remember(); trackStore.updateClip(trackStore.activeId, clipId, { start }); setStatus(`片段已移动到 ${formatTime(start, true)}，其他轨道时间不变`) }
   const trimTimelineClip = (clipId: string, patch: Partial<import('./mixer').AudioClip>) => { trackStore.updateClip(trackStore.activeId, clipId, patch); setStatus('正在调整片段入点或出点') }

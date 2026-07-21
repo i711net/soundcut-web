@@ -39,6 +39,19 @@ export function useTrackStore() {
     const left: AudioClip = { ...clip, duration: sourceAt - clip.offset }, right: AudioClip = { ...clip, id: newClip(clip.buffer).id, name: `${clip.name} · 片段`, start: timelineTime, offset: sourceAt, duration: clip.offset + clip.duration - sourceAt }
     return { ...track, clips: track.clips.flatMap(item => item.id === clipId ? [left, right] : [item]) }
   })), [])
+  const splitClipRange = useCallback((trackId: string, clipId: string, timelineFrom: number, timelineTo: number) => setTracks(items => items.map(track => {
+    if (track.id !== trackId) return track
+    const clip = track.clips.find(item => item.id === clipId); if (!clip) return track
+    const rate = clip.playbackRate * track.playbackRate * track.clipPlaybackRate, clipEnd = clip.start + clip.duration / rate
+    const from = Math.max(clip.start, Math.min(timelineFrom, timelineTo)), to = Math.min(clipEnd, Math.max(timelineFrom, timelineTo))
+    if (to - from < .001) return track
+    const sourceFrom = clip.offset + (from - clip.start) * rate, sourceTo = clip.offset + (to - clip.start) * rate, sourceEnd = clip.offset + clip.duration
+    const parts: AudioClip[] = []
+    if (sourceFrom - clip.offset > .001) parts.push({ ...clip, duration: sourceFrom - clip.offset })
+    parts.push({ ...clip, id: newClip(clip.buffer).id, name: `${clip.name} · 选区`, start: from, offset: sourceFrom, duration: sourceTo - sourceFrom })
+    if (sourceEnd - sourceTo > .001) parts.push({ ...clip, id: newClip(clip.buffer).id, name: `${clip.name} · 片段`, start: to, offset: sourceTo, duration: sourceEnd - sourceTo })
+    return { ...track, clips: track.clips.flatMap(item => item.id === clipId ? parts : [item]) }
+  })), [])
   const extractVideoToMain = useCallback(() => setTracks(items => {
     const video = items.find(track => track.kind === 'video'), main = items.find(track => track.kind === 'main')
     if (!video?.buffer || !main) return items
@@ -51,5 +64,5 @@ export function useTrackStore() {
     setActiveId(current => current === id ? 'track-1' : current)
     return next
   }), [])
-  return { tracks, activeId, activeTrack, setActiveId, replaceTracks, updateTrack, setTrackBuffer, setTrackEditedBuffer, setTrackProcessedBuffer, addTrack, addClip, updateClip, deleteClip, removeClipRange, splitClip, deleteTrack, extractVideoToMain }
+  return { tracks, activeId, activeTrack, setActiveId, replaceTracks, updateTrack, setTrackBuffer, setTrackEditedBuffer, setTrackProcessedBuffer, addTrack, addClip, updateClip, deleteClip, removeClipRange, splitClip, splitClipRange, deleteTrack, extractVideoToMain }
 }
