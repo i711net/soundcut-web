@@ -1,6 +1,8 @@
+import { connectAudioEffects, defaultAudioEffects, type AudioEffectSettings } from './audio-effects'
+
 export type TrackKind = 'main' | 'video' | 'audio'
 export type AutomationPoint = { id: string; time: number; value: number }
-export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; fadeIn: number; fadeOut: number; volumeEnvelope: AutomationPoint[]; voicePreset: VoicePreset; pitchSemitones: number; originalBuffer?: AudioBuffer; originalOffset?: number; originalDuration?: number }
+export type AudioClip = { id: string; name: string; buffer: AudioBuffer; start: number; offset: number; duration: number; volume: number; playbackRate: number; fadeIn: number; fadeOut: number; volumeEnvelope: AutomationPoint[]; effects: AudioEffectSettings; voicePreset: VoicePreset; pitchSemitones: number; originalBuffer?: AudioBuffer; originalOffset?: number; originalDuration?: number }
 
 export type MixerTrack = {
   id: string
@@ -21,15 +23,17 @@ export type MixerTrack = {
   clipPitchSemitones: number
   appliedPitchSemitones: number
   includeInExport: boolean
+  effects: AudioEffectSettings
   clips: AudioClip[]
 }
 
 let clipSequence = 1
-export const newClip = (buffer: AudioBuffer, name = '音频片段', start = 0): AudioClip => ({ id: `clip-${clipSequence++}`, name, buffer, start, offset: 0, duration: buffer.duration, volume: 1, playbackRate: 1, fadeIn: 0, fadeOut: 0, volumeEnvelope: [], voicePreset: 'none', pitchSemitones: 0 })
+export const newClip = (buffer: AudioBuffer, name = '音频片段', start = 0): AudioClip => ({ id: `clip-${clipSequence++}`, name, buffer, start, offset: 0, duration: buffer.duration, volume: 1, playbackRate: 1, fadeIn: 0, fadeOut: 0, volumeEnvelope: [], effects: defaultAudioEffects(), voicePreset: 'none', pitchSemitones: 0 })
 
 export const newTrack = (id: string, name: string, kind: TrackKind, buffer: AudioBuffer | null = null): MixerTrack => ({
   id, name, kind, buffer, originalBuffer: buffer, muted: false, solo: false, volume: 1, playbackRate: 1,
   clipVolume: 1, clipPlaybackRate: 1, expanded: false, includeInExport: true,
+  effects: defaultAudioEffects(),
   voicePreset: 'none', clipVoicePreset: 'none',
   pitchSemitones: 0, clipPitchSemitones: 0, appliedPitchSemitones: 0,
   clips: buffer ? [newClip(buffer, name)] : [],
@@ -58,6 +62,7 @@ export async function mixTracks(tracks: MixerTrack[], selectedOnly = true, maste
   limiter.threshold.value = -1; limiter.knee.value = 0; limiter.ratio.value = 20; limiter.attack.value = .003; limiter.release.value = .12
   master.connect(limiter).connect(context.destination)
   for (const track of sources) {
+    const rawBus = context.createGain(), bus = context.createGain(); connectAudioEffects(context, rawBus, bus, track.effects); bus.connect(master)
     const clips = track.clips
     for (const clip of clips) {
       const node = context.createBufferSource(), gain = context.createGain(), fadeGain = context.createGain(), rate = trackRate(track, masterRate) * clip.playbackRate
@@ -69,7 +74,8 @@ export async function mixTracks(tracks: MixerTrack[], selectedOnly = true, maste
       fadeGain.gain.setValueAtTime(clip.fadeIn > 0 ? 0 : 1, clip.start)
       if (clip.fadeIn > 0) fadeGain.gain.linearRampToValueAtTime(1, clip.start + Math.min(clip.fadeIn, clipLength))
       if (clip.fadeOut > 0) { fadeGain.gain.setValueAtTime(1, Math.max(clip.start, clip.start + clipLength - clip.fadeOut)); fadeGain.gain.linearRampToValueAtTime(0, clip.start + clipLength) }
-      connectVoiceEffects(context, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(fadeGain).connect(master); node.start(clip.start, clip.offset, clip.duration)
+      const voiceOut = context.createGain(), clipFxOut = context.createGain()
+      connectVoiceEffects(context, node, voiceOut, [track.voicePreset, clip.voicePreset]); connectAudioEffects(context, voiceOut, clipFxOut, clip.effects); clipFxOut.connect(gain); gain.connect(fadeGain).connect(rawBus); node.start(clip.start, clip.offset, clip.duration)
     }
   }
   return context.startRendering()

@@ -29,6 +29,9 @@ import './fade-visuals.css'
 import LevelMeters from './LevelMeters'
 import './level-meters.css'
 import './volume-envelope.css'
+import AudioEffectsPanel from './AudioEffectsPanel'
+import './audio-effects.css'
+import { defaultAudioEffects } from './audio-effects'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -634,6 +637,7 @@ export default function App() {
           <label>播放速度 <output>{speed.toFixed(2)}×</output><PreciseRange ariaLabel="总速度" min={.5} max={2} step={.05} value={speed} onChange={setSpeed}/></label><hr/>
           <label>导出格式<select value={exportFormat} onChange={e => setExportFormat(e.target.value as AudioExportFormat)}><option value="wav">WAV · 16 bit</option><option value="mp3">MP3 · 192 kbps</option><option value="m4a">M4A / AAC · 192 kbps</option><option value="flac">FLAC · 无损</option><option value="ogg">OGG Vorbis</option></select></label>
           <div className="selection-info"><span>当前选区</span><b>{formatTime(selection[0], true)} — {formatTime(selection[1], true)}</b></div>
+          <AudioEffectsPanel settings={effectScope === 'clip' && selectedClip ? (selectedClip.effects || defaultAudioEffects()) : (trackStore.activeTrack.effects || defaultAudioEffects())} scope={effectScope} clipAvailable={!!selectedClip} onScope={setEffectScope} onChange={effects => { if (effectScope === 'clip' && selectedClip) trackStore.updateClip(trackStore.activeId, selectedClip.id, { effects }); else trackStore.updateTrack(trackStore.activeId, { effects }); setStatus(`${effectScope === 'clip' ? '当前片段' : '整条音轨'}效果参数已更新`) }}/>
         </div> : <TranscriptPanel fileName={fileName} hasAudio={!!trackStore.activeTrack.buffer} language={language} onLanguage={setLanguage} contentMode={contentMode} onContentMode={setContentMode} segments={transcript} onSegments={setTranscript} onSeek={seek} onTranscribe={transcribe} progress={transcriptionProgress} working={transcribing} error={transcriptionError}/>} 
       </aside>
     </main>

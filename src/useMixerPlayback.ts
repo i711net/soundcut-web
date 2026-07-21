@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { audibleTracks, durationOfTracks, trackRate, type MixerTrack } from './mixer'
 import { connectVoiceEffects } from './voice-effects'
+import { connectAudioEffects } from './audio-effects'
 
 export type MeterState = { master: { left: number; right: number }; tracks: Record<string, { left: number; right: number }>; clipping: boolean; limiterReduction: number }
 
@@ -42,7 +43,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
     master.connect(limiter).connect(audioContext.destination)
     const masterMeters = analyserPair(audioContext, limiter), trackMeters = new Map<string, ReturnType<typeof analyserPair>>(), trackBuses = new Map<string, GainNode>()
     for (const track of playable) {
-      const bus = audioContext.createGain(); bus.connect(master); trackBuses.set(track.id, bus); trackMeters.set(track.id, analyserPair(audioContext, bus))
+      const rawBus = audioContext.createGain(), bus = audioContext.createGain(); connectAudioEffects(audioContext, rawBus, bus, track.effects); bus.connect(master); trackBuses.set(track.id, bus); trackMeters.set(track.id, analyserPair(audioContext, bus))
       const clips = track.clips
       for (const clip of clips) {
         const rate = trackRate(track, masterRate) * clip.playbackRate, clipEnd = clip.start + clip.duration / rate
@@ -59,7 +60,8 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
         if (clip.fadeIn > elapsed) fadeGain.gain.linearRampToValueAtTime(1, startAt + clip.fadeIn - elapsed)
         const fadeOutStart = Math.max(0, clipLength - clip.fadeOut)
         if (clip.fadeOut > 0) { const untilFade = Math.max(0, fadeOutStart - elapsed); fadeGain.gain.setValueAtTime(elapsed >= fadeOutStart ? Math.max(0, (clipLength - elapsed) / clip.fadeOut) : 1, startAt + untilFade); fadeGain.gain.linearRampToValueAtTime(0, startAt + Math.max(0, clipLength - elapsed)) }
-        connectVoiceEffects(audioContext, node, gain, [track.voicePreset, clip.voicePreset]); gain.connect(fadeGain).connect(bus); node.start(startAt, bufferOffset, clip.offset + clip.duration - bufferOffset)
+        const voiceOut = audioContext.createGain(), clipFxOut = audioContext.createGain()
+        connectVoiceEffects(audioContext, node, voiceOut, [track.voicePreset, clip.voicePreset]); connectAudioEffects(audioContext, voiceOut, clipFxOut, clip.effects); clipFxOut.connect(gain); gain.connect(fadeGain).connect(rawBus); node.start(startAt, bufferOffset, clip.offset + clip.duration - bufferOffset)
         node.onended = () => nodes.current.delete(key); nodes.current.set(key, node); gains.current.set(key, gain)
       }
     }
@@ -89,7 +91,7 @@ export function useMixerPlayback(tracks: MixerTrack[], masterRate: number, maste
   }, [masterRate, masterVolume, tracks])
 
   useEffect(() => {
-    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${track.clips.map(clip => `${clip.id}:${clip.voicePreset}:${clip.start}:${clip.offset}:${clip.duration}:${clip.fadeIn}:${clip.fadeOut}:${JSON.stringify(clip.volumeEnvelope || [])}`).join(',')}`).join('|')
+    const signature = tracks.map(track => `${track.id}:${track.voicePreset}:${JSON.stringify(track.effects)}:${track.clips.map(clip => `${clip.id}:${clip.voicePreset}:${clip.start}:${clip.offset}:${clip.duration}:${clip.fadeIn}:${clip.fadeOut}:${JSON.stringify(clip.volumeEnvelope || [])}:${JSON.stringify(clip.effects)}`).join(',')}`).join('|')
     const changed = effectSignature.current !== '' && effectSignature.current !== signature
     effectSignature.current = signature
     if (!changed || !playing || !context.current) return

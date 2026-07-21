@@ -1,5 +1,6 @@
 import type { MixerTrack } from './mixer'
 import type { TranscriptSegment } from './transcript'
+import { defaultAudioEffects } from './audio-effects'
 
 const DB_NAME = 'soundcut-projects'
 const STORE_NAME = 'autosave'
@@ -51,7 +52,7 @@ export function serializeProject(tracks: MixerTrack[], settings: ProjectSettings
   const storedTracks = tracks.map(track => {
     const { buffer, originalBuffer, clips, ...trackSettings } = track
     return {
-      ...trackSettings,
+      ...trackSettings, effects: trackSettings.effects || defaultAudioEffects(),
       bufferId: bufferId(buffer),
       originalBufferId: bufferId(originalBuffer),
       clips: clips.map(clip => {
@@ -80,7 +81,7 @@ export function deserializeProject(project: StoredProject): { tracks: MixerTrack
         const { bufferId: clipBufferId, originalBufferId: originalClipBufferId, ...clipSettings } = storedClip
         const buffer = buffers.get(clipBufferId)
         if (!buffer) throw new Error('工程音频数据不完整')
-        return { ...clipSettings, volumeEnvelope: clipSettings.volumeEnvelope || [], buffer, originalBuffer: originalClipBufferId ? buffers.get(originalClipBufferId) : undefined }
+        return { ...clipSettings, volumeEnvelope: clipSettings.volumeEnvelope || [], effects: clipSettings.effects || defaultAudioEffects(), buffer, originalBuffer: originalClipBufferId ? buffers.get(originalClipBufferId) : undefined }
       }),
     } satisfies MixerTrack
   })
