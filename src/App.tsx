@@ -38,6 +38,8 @@ import MarkerPanel from './MarkerPanel'
 import './markers.css'
 import ExportPanel, { defaultExportSettings, type ExportSettings } from './ExportPanel'
 import './export-panel.css'
+import PerformancePanel from './PerformancePanel'
+import './performance.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject, type TimelineMarker } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -78,6 +80,7 @@ export default function App() {
   const [transcriptionError, setTranscriptionError] = useState('')
   const [exportFormat, setExportFormat] = useState<AudioExportFormat>('wav')
   const [exportSettings, setExportSettings] = useState<ExportSettings>(defaultExportSettings)
+  const [performanceMode, setPerformanceMode] = useState(false)
   const [mediaWorking, setMediaWorking] = useState(false)
   const [videoUrl, setVideoUrl] = useState('')
   const [streamUrlInput, setStreamUrlInput] = useState('')
@@ -97,6 +100,7 @@ export default function App() {
   const fragmentInput = useRef<HTMLInputElement>(null)
   const projectInput = useRef<HTMLInputElement>(null)
   const projectReady = useRef(false)
+  const autosaveBusy = useRef(false)
   const timelineBodyRef = useRef<HTMLDivElement | null>(null), playheadDrag = useRef({ active: false, resume: false })
   const screenRecorder = useRef<MediaRecorder | null>(null), screenStream = useRef<MediaStream | null>(null), screenChunks = useRef<Blob[]>([]), screenTimer = useRef(0)
   const screenPreview = useRef<HTMLVideoElement | null>(null), screenRecordingBlob = useRef<Blob | null>(null), screenRecordingObjectUrl = useRef('')
@@ -111,6 +115,9 @@ export default function App() {
   const videoTrackForPlayback = trackStore.tracks.find(track => track.id === 'video-1')
   const shouldSyncVideoPlayback = !!videoUrl && !!videoTrackForPlayback?.clips.length && !videoTrackForPlayback.muted
   const playheadPercent = Math.min(100, Math.max(0, currentTime / timelineDuration * 100))
+  const uniqueProjectBuffers = new Set(trackStore.tracks.flatMap(track => [...track.clips.map(clip => clip.buffer), ...(track.originalBuffer ? [track.originalBuffer] : [])]))
+  const projectAudioBytes = [...uniqueProjectBuffers].reduce((total, audio) => total + audio.length * audio.numberOfChannels * 4, 0)
+  const projectClipCount = trackStore.tracks.reduce((total, track) => total + track.clips.length, 0)
 
   useEffect(() => () => { source.current?.stop(); cancelAnimationFrame(frame.current); clearInterval(screenTimer.current); screenStream.current?.getTracks().forEach(track => track.stop()); audioContext.current?.close(); if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current); if (screenRecordingObjectUrl.current) URL.revokeObjectURL(screenRecordingObjectUrl.current) }, [])
   useEffect(() => { if (videoElement.current) videoElement.current.playbackRate = speed * trackStore.tracks[1].playbackRate * trackStore.tracks[1].clipPlaybackRate }, [speed, trackStore.tracks])
@@ -125,7 +132,7 @@ export default function App() {
     return () => window.cancelAnimationFrame(restart)
   }, [trackStore.tracks, mixerPlayback.playFrom])
 
-  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings })
+  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings, performanceMode })
   const applyProject = (project: StoredProject, recovered = false) => {
     mixerPlayback.stop()
     const restored = deserializeProject(project), value = restored.settings
@@ -134,7 +141,7 @@ export default function App() {
     skipBufferSync.current = true; setBuffer(main?.buffer || null)
     setFileName(value.fileName || '未命名项目'); setSelection(value.selection || [0, 0]); setSelectedClipId(value.selectedClipId || '')
     setSpeed(value.speed || 1); setMasterVolume(value.masterVolume ?? 1); setSnapEnabled(value.snapEnabled ?? true); setSnapGap(value.snapGap || 0); setTimelinePadding(value.timelinePadding || 60); setTimelineZoom(value.timelineZoom || 12); setCompactTracks(!!value.compactTracks)
-    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat); setMarkers(value.markers || []); setExportSettings(value.exportSettings || defaultExportSettings())
+    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat); setMarkers(value.markers || []); setExportSettings(value.exportSettings || defaultExportSettings()); setPerformanceMode(!!value.performanceMode)
     setCurrentTime(0); currentTimeRef.current = 0; setHistory([]); setFuture([]); setStatus(recovered ? `已恢复自动保存：${new Date(project.savedAt).toLocaleString()}` : '工程已打开，可以继续编辑')
   }
   const saveProjectFile = () => {
@@ -162,10 +169,12 @@ export default function App() {
   useEffect(() => {
     if (!projectReady.current || !trackStore.tracks.some(track => track.clips.length)) return
     const timer = window.setTimeout(() => {
-      void saveAutosave(serializeProject(trackStore.tracks, projectSettings())).then(() => setStatus(current => current === '准备就绪' ? '工程已自动保存' : current)).catch(() => setStatus('自动保存失败：浏览器存储空间可能不足'))
+      if (autosaveBusy.current) return
+      autosaveBusy.current = true
+      void saveAutosave(serializeProject(trackStore.tracks, projectSettings())).then(() => setStatus(current => current === '准备就绪' ? '工程已自动保存' : current)).catch(() => setStatus('自动保存失败：浏览器存储空间可能不足')).finally(() => { autosaveBusy.current = false })
     }, 1800)
     return () => window.clearTimeout(timer)
-  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings])
+  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers, exportSettings, performanceMode])
 
   const changeTimelineZoom = (next: number, clientX?: number) => {
     const body = timelineBodyRef.current, clamped = Math.max(6, Math.min(200, next))
@@ -201,6 +210,7 @@ export default function App() {
       const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
       const sourceData = isVideo ? await (await extractAudioFromVideo(file)).arrayBuffer() : await file.arrayBuffer()
       const decoded = await ctx.decodeAudioData(sourceData)
+      if (decoded.duration > 1800 || decoded.length * decoded.numberOfChannels * 4 > 300 * 1024 ** 2) { setPerformanceMode(true); setStatus('检测到长音频，已自动开启性能模式') }
       if (isVideo || importTarget.current === 'video-1') { trackStore.setTrackBuffer('video-1', decoded, `${file.name.replace(/\.[^.]+$/, '')} · 原声`); trackStore.setActiveId('video-1') }
       else if (importTarget.current === 'track-1') { setBuffer(decoded); trackStore.setActiveId('track-1') }
       else { trackStore.setTrackBuffer(importTarget.current, decoded, file.name.replace(/\.[^.]+$/, '')); trackStore.setActiveId(importTarget.current) }
@@ -647,7 +657,7 @@ export default function App() {
   }
 
   const Tool = ({ icon, label, action, disabled = false, active = false }: { icon: React.ReactNode; label: string; action?: () => void; disabled?: boolean; active?: boolean }) => <button className={`tool ${active ? 'active' : ''}`} onClick={action} disabled={disabled}>{icon}<span>{label}</span></button>
-  return <div className="app" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void openMediaToClipboard(e.dataTransfer.files[0]) }}>
+  return <div className={`app ${performanceMode ? 'performance-mode' : ''}`} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void openMediaToClipboard(e.dataTransfer.files[0]) }}>
     <header><div className="brand"><span className="brand-mark"><i/><i/><i/><i/><i/></span><b>声刻</b><span>SoundCut</span></div><div className="project">{fileName}</div><div className="header-actions"><input ref={projectInput} type="file" accept=".soundcut,application/x-soundcut-project" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void openProjectFile(file) }}/><button className="project-action" title="打开工程" aria-label="打开工程" onClick={() => projectInput.current?.click()}><FolderOpen/></button><button className="project-action" title="保存工程" aria-label="保存工程" onClick={saveProjectFile} disabled={!trackStore.tracks.some(track => track.clips.length)}><Save/></button><button aria-label="撤销" onClick={undo} disabled={!history.length}><Undo2/></button><button aria-label="重做" onClick={redo} disabled={!future.length}><Redo2/></button><button className="export" onClick={exportAudio} disabled={mediaWorking}><Download/> {mediaWorking ? '处理中' : '导出'}</button></div></header>
     <main>
       <aside className="tools"><button className="import" onClick={() => fragmentInput.current?.click()}><Upload/>导入媒体</button><input ref={input} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void loadFile(file) }}/><input ref={fragmentInput} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void openMediaToClipboard(file) }}/><div className="screen-record-config"><button className={`tool ${screenRecording ? 'recording' : ''}`} onClick={screenStage === 'recording' ? stopScreenRecording : screenStage === 'idle' || screenStage === 'error' ? prepareScreenRecording : () => undefined}><MonitorUp/><span>{screenStage === 'selecting' ? '选择录制来源…' : screenStage === 'ready' ? '预录制已就绪' : screenStage === 'recording' ? `录制中 ${formatTime(screenRecordingSeconds)}` : screenStage === 'finished' ? '录制已完成' : '录制屏幕'}</span></button><select value={captureSize} disabled={screenStage !== 'idle' && screenStage !== 'error'} onChange={e => setCaptureSize(e.target.value as typeof captureSize)} aria-label="录屏清晰度"><option value="source">原始尺寸</option><option value="720">720p</option><option value="1080">1080p</option></select></div><Tool icon={<MousePointer2/>} label={timelineTool === 'select' ? '选择中' : '选择'} active={timelineTool === 'select'} action={() => { setTimelineTool(tool => tool === 'select' ? 'move' : 'select'); setStatus(timelineTool === 'select' ? '已切回片段移动模式' : '选择模式：在音频波形上按住鼠标拖出区间') }}/><Tool icon={<Scissors/>} label="保留选区" action={keepSelection} disabled={!selectedClip}/><Tool icon={<Trash2/>} label="删除选区" action={deleteSelection} disabled={!selectedClip}/><Tool icon={<Waves/>} label="淡入 / 淡出"/><div className="tool-spacer"/><Tool icon={<Undo2/>} label="撤销" action={undo} disabled={!history.length}/><Tool icon={<Redo2/>} label="重做" action={redo} disabled={!future.length}/></aside>
@@ -678,6 +688,7 @@ export default function App() {
         <LevelMeters tracks={trackStore.tracks} meters={mixerPlayback.meters}/>
         <MarkerPanel markers={markers} currentTime={currentTime} selection={selection} onAddPoint={addPointMarker} onAddRegion={addRegionMarker} onChange={updateMarker} onDelete={deleteMarker} onSeek={seek}/>
         <ExportPanel format={exportFormat} settings={exportSettings} selectionAvailable={selection[1] - selection[0] >= .01} onFormat={setExportFormat} onChange={setExportSettings}/>
+        <PerformancePanel bytes={projectAudioBytes} duration={mixerPlayback.duration} clips={projectClipCount} history={history.length} enabled={performanceMode} onToggle={() => setPerformanceMode(value => !value)} onClearHistory={() => { setHistory([]); setFuture([]); setStatus('撤销与重做历史已清理') }} onReleaseClipboard={() => { setAudioClipboard(null); setStatus('复制粘贴音频缓存已释放') }}/>
         <div className="inspector-tabs">
           <button className={inspectorTab === 'properties' ? 'active' : ''} onClick={() => setInspectorTab('properties')}><SlidersHorizontal/>属性</button>
           <button className={inspectorTab === 'transcript' ? 'active' : ''} onClick={() => setInspectorTab('transcript')}><FileText/>文字{transcript.length > 0 && <i>{transcript.length}</i>}</button>

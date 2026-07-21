@@ -3,6 +3,7 @@ import type { AudioClip, MixerTrack } from './mixer'
 
 type Props = { track: MixerTrack; timelineDuration: number; tool: 'move' | 'select'; selection: [number, number]; selectedClipId: string; onSelect: (clip: AudioClip) => void; onSelection: (range: [number, number]) => void; onMove: (clipId: string, start: number, targetTrackId: string) => void; onTrim: (clipId: string, patch: Partial<AudioClip>) => void; onSeek: (time: number) => void }
 
+const waveformCache = new WeakMap<AudioBuffer, Map<string, Array<[number, number]>>>()
 function ClipWave({ clip }: { clip: AudioClip }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
@@ -11,11 +12,14 @@ function ClipWave({ clip }: { clip: AudioClip }) {
     element.width = Math.max(1, rect.width * ratio); element.height = Math.max(1, rect.height * ratio)
     const context = element.getContext('2d'); if (!context) return
     context.scale(ratio, ratio); context.clearRect(0, 0, rect.width, rect.height)
-    const data = clip.buffer.getChannelData(0), startFrame = Math.floor(clip.offset * clip.buffer.sampleRate), frames = Math.floor(clip.duration * clip.buffer.sampleRate), step = Math.max(1, Math.floor(frames / Math.max(1, rect.width))), amplitude = rect.height * .37
+    const data = clip.buffer.getChannelData(0), startFrame = Math.floor(clip.offset * clip.buffer.sampleRate), frames = Math.floor(clip.duration * clip.buffer.sampleRate), columns = Math.max(1, Math.floor(rect.width)), step = Math.max(1, Math.floor(frames / columns)), sampleStride = Math.max(1, Math.floor(step / 128)), amplitude = rect.height * .37, key = `${startFrame}:${frames}:${columns}:${sampleStride}`
+    let cache = waveformCache.get(clip.buffer); if (!cache) { cache = new Map(); waveformCache.set(clip.buffer, cache) }
+    let peaks = cache.get(key)
+    if (!peaks) { peaks = []; for (let x = 0; x < columns; x++) { let min = 1, max = -1; const frame = startFrame + x * step, end = Math.min(startFrame + frames, frame + step); for (let sample = frame; sample < end; sample += sampleStride) { const value = data[sample] || 0; min = Math.min(min, value); max = Math.max(max, value) } peaks.push([min === 1 ? 0 : min, max === -1 ? 0 : max]) } cache.set(key, peaks); if (cache.size > 12) cache.delete(cache.keys().next().value!) }
     context.strokeStyle = '#57ddd7'; context.lineWidth = 1; context.beginPath()
-    for (let x = 0; x < rect.width; x++) { let min = 1, max = -1; const frame = startFrame + x * step; for (let j = 0; j < step; j++) { const value = data[frame + j] || 0; min = Math.min(min, value); max = Math.max(max, value) } context.moveTo(x, rect.height / 2 + min * amplitude); context.lineTo(x, rect.height / 2 + max * amplitude) }
+    for (let x = 0; x < columns; x++) { const [min, max] = peaks[x]; const drawX = x / columns * rect.width; context.moveTo(drawX, rect.height / 2 + min * amplitude); context.lineTo(drawX, rect.height / 2 + max * amplitude) }
     context.stroke()
-  }, [clip])
+  }, [clip.buffer, clip.offset, clip.duration])
   return <canvas ref={canvas}/>
 }
 

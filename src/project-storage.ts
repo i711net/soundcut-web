@@ -29,6 +29,7 @@ export type ProjectSettings = {
   exportFormat: string
   markers?: TimelineMarker[]
   exportSettings?: ExportSettings
+  performanceMode?: boolean
 }
 
 export type TimelineMarker = { id: string; name: string; time: number; end?: number; color: string }
@@ -51,7 +52,7 @@ export function serializeProject(tracks: MixerTrack[], settings: ProjectSettings
     if (known) return known
     const id = `audio-${ids.size + 1}`
     ids.set(buffer, id)
-    buffers.push({ id, sampleRate: buffer.sampleRate, length: buffer.length, channels: Array.from({ length: buffer.numberOfChannels }, (_, channel) => new Float32Array(buffer.getChannelData(channel))) })
+    buffers.push({ id, sampleRate: buffer.sampleRate, length: buffer.length, channels: Array.from({ length: buffer.numberOfChannels }, (_, channel) => buffer.getChannelData(channel)) })
     return id
   }
   const storedTracks = tracks.map(track => {
