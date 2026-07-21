@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText, Video, Plus, CopyPlus, Headphones, Mic, Square, MonitorUp } from 'lucide-react'
+import { Download, Upload, MousePointer2, Scissors, Waves, Undo2, Redo2, Play, Pause, SkipBack, SkipForward, ZoomIn, ZoomOut, Music2, Trash2, LockKeyhole, RotateCcw, SlidersHorizontal, FileText, Video, Plus, CopyPlus, Headphones, Mic, Square, MonitorUp, UserRound, AudioLines } from 'lucide-react'
 import Waveform from './Waveform'
-import { bufferToWav, formatTime, removeRange, renderBuffer, type EditSettings } from './audio'
+import { bufferToWav, formatTime, removeRange, renderBuffer, separateStereo, type EditSettings } from './audio'
 import TranscriptPanel from './TranscriptPanel'
 import { mergeTranscriptSegments, parseVtt, type TranscriptSegment } from './transcript'
-import { convertWav, extractAudioFromVideo, type AudioExportFormat } from './media'
+import { convertWav, extractAudioFromVideo, pitchShiftWav, type AudioExportFormat } from './media'
 import { useTrackStore } from './useTrackStore'
 import TrackControls from './TrackControls'
 import ClipControls from './ClipControls'
@@ -43,6 +43,7 @@ export default function App() {
   const [screenRecording, setScreenRecording] = useState(false)
   const [screenRecordingSeconds, setScreenRecordingSeconds] = useState(0)
   const [captureSize, setCaptureSize] = useState<'source' | '720' | '1080'>('1080')
+  const [pitchWorkingId, setPitchWorkingId] = useState('')
   const audioContext = useRef<AudioContext | null>(null), source = useRef<AudioBufferSourceNode | null>(null), startedAt = useRef(0), offset = useRef(0), frame = useRef(0)
   const videoElement = useRef<HTMLVideoElement | null>(null), videoObjectUrl = useRef('')
   const currentTimeRef = useRef(0)
@@ -50,6 +51,7 @@ export default function App() {
   const recorder = useRef<MediaRecorder | null>(null), recorderStream = useRef<MediaStream | null>(null), recordingChunks = useRef<Blob[]>([]), recordingTimer = useRef(0)
   const screenRecorder = useRef<MediaRecorder | null>(null), screenStream = useRef<MediaStream | null>(null), screenChunks = useRef<Blob[]>([]), screenTimer = useRef(0)
   const importTarget = useRef('track-1')
+  const preserveMainPitch = useRef<number | null>(null)
   const mixerPlayback = useMixerPlayback(trackStore.tracks, speed, masterVolume, time => { currentTimeRef.current = time; setCurrentTime(time) })
   const timelineDuration = mixerPlayback.duration || 120
   const playheadPercent = Math.min(100, Math.max(0, currentTime / timelineDuration * 100))
@@ -58,7 +60,7 @@ export default function App() {
   useEffect(() => () => { source.current?.stop(); cancelAnimationFrame(frame.current); clearInterval(recordingTimer.current); clearInterval(screenTimer.current); recorderStream.current?.getTracks().forEach(track => track.stop()); screenStream.current?.getTracks().forEach(track => track.stop()); audioContext.current?.close(); if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current) }, [])
   useEffect(() => { if (videoElement.current) videoElement.current.playbackRate = speed * trackStore.tracks[1].playbackRate * trackStore.tracks[1].clipPlaybackRate }, [speed, trackStore.tracks])
   useEffect(() => { currentTimeRef.current = currentTime }, [currentTime])
-  useEffect(() => { trackStore.setTrackBuffer('track-1', buffer) }, [buffer, trackStore.setTrackBuffer])
+  useEffect(() => { if (preserveMainPitch.current !== null) { trackStore.setTrackProcessedBuffer('track-1', buffer, preserveMainPitch.current); preserveMainPitch.current = null } else trackStore.setTrackBuffer('track-1', buffer) }, [buffer, trackStore.setTrackBuffer, trackStore.setTrackProcessedBuffer])
 
   const loadFile = async (file?: File) => {
     if (!file) return
@@ -162,6 +164,29 @@ export default function App() {
     trackStore.updateTrack('video-1', { muted: false, solo: !videoTrack.solo })
     trackStore.setActiveId('video-1'); setStatus(videoTrack.solo ? '已取消隔离视频原声' : '已隔离视频原声，仅播放本轨道')
   }
+  const applyPitch = async (trackId: string) => {
+    const track = trackStore.tracks.find(item => item.id === trackId), semitones = (track?.pitchSemitones || 0) + (track?.clipPitchSemitones || 0)
+    if (!track?.originalBuffer || pitchWorkingId) return
+    try {
+      setPitchWorkingId(trackId); setStatus(semitones ? `正在生成 ${semitones > 0 ? '+' : ''}${semitones} 半音变调…` : '正在恢复原始音高…')
+      const shifted = await pitchShiftWav(bufferToWav(track.originalBuffer), semitones, track.originalBuffer.sampleRate)
+      const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
+      const decoded = await ctx.decodeAudioData(await shifted.arrayBuffer())
+      if (trackId === 'track-1') { preserveMainPitch.current = semitones; setBuffer(decoded) }
+      else trackStore.setTrackProcessedBuffer(trackId, decoded, semitones)
+      setStatus(`歌曲变调已应用：${semitones > 0 ? '+' : ''}${semitones} 半音，时长已补偿`)
+    } catch { setStatus('歌曲变调失败，请尝试 WAV 文件或较短的片段') }
+    finally { setPitchWorkingId('') }
+  }
+  const separateActiveTrack = () => {
+    const track = trackStore.activeTrack
+    if (!track.buffer) { setStatus('请先选择含音频的轨道'); return }
+    try {
+      const vocals = separateStereo(track.buffer, 'vocals'), instrumental = separateStereo(track.buffer, 'instrumental')
+      trackStore.addTrack(vocals, `${track.name} · 人声`); trackStore.addTrack(instrumental, `${track.name} · 伴奏`)
+      setStatus('本地快速分离完成：已生成人声轨和伴奏轨')
+    } catch (error) { setStatus(error instanceof Error ? error.message : '人声分离失败') }
+  }
 
   const stop = (keepTime = true) => {
     if (source.current) { try { source.current.stop() } catch { /* already stopped */ } source.current = null }
@@ -241,10 +266,10 @@ export default function App() {
         <div className="master-controls"><strong>总控</strong><label>速度<input type="range" min=".5" max="2" step=".05" value={speed} onChange={e => setSpeed(+e.target.value)}/><output>{speed.toFixed(2)}×</output></label><label>主音量<input type="range" min="0" max="2" step=".01" value={masterVolume} onChange={e => setMasterVolume(+e.target.value)}/><output>{Math.round(masterVolume * 100)}%</output></label></div>
         <div className="timeline-body">
         <div className="timeline-playhead" style={{ left: playheadPosition }}><span>{formatTime(currentTime, true)}</span></div>
-        <div className={`track ${trackStore.tracks[0].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[0]} active={trackStore.activeId === 'track-1'} onActivate={() => trackStore.setActiveId('track-1')} onChange={patch => trackStore.updateTrack('track-1', patch)}/><div className="track-canvas">{buffer ? <><Waveform buffer={buffer} selection={selection} currentTime={currentTime} onSelection={setSelection} onSeek={seek}/><ClipControls track={trackStore.tracks[0]} onChange={patch => trackStore.updateTrack('track-1', patch)}/></> : <button className="empty" onClick={() => requestImport('main')}><Upload/><strong>导入音频，开始创作</strong><span>视频可从右侧监看区导入</span></button>}</div></div>
-        <div className={`track video-audio-track ${trackStore.tracks[1].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[1]} active={trackStore.activeId === 'video-1'} onActivate={() => trackStore.setActiveId('video-1')} onChange={patch => trackStore.updateTrack('video-1', patch)} onExtract={trackStore.tracks[1].buffer ? extractVideoToMain : undefined}/><div className="track-canvas">{trackStore.tracks[1].buffer ? <><Waveform buffer={trackStore.tracks[1].buffer} selection={[0, trackStore.tracks[1].buffer.duration]} currentTime={currentTime} onSelection={() => undefined} onSeek={seek}/><ClipControls track={trackStore.tracks[1]} onChange={patch => trackStore.updateTrack('video-1', patch)}/></> : <button className="video-empty" onClick={() => requestImport('video-1')}><Video/><span>导入视频，原声显示在此轨</span></button>}</div></div>
-        <div className={`track ${trackStore.tracks[2].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[2]} active={trackStore.activeId === 'track-3'} onActivate={() => trackStore.setActiveId('track-3')} onChange={patch => trackStore.updateTrack('track-3', patch)}/><div className="track-canvas">{trackStore.tracks[2].buffer ? <><Waveform buffer={trackStore.tracks[2].buffer} selection={[0, trackStore.tracks[2].buffer.duration]} currentTime={currentTime} onSelection={() => undefined} onSeek={seek}/><ClipControls track={trackStore.tracks[2]} onChange={patch => trackStore.updateTrack('track-3', patch)}/></> : <button className="video-empty" onClick={() => requestImport('music')}><Music2/><span>导入背景音乐</span></button>}</div></div>
-        {trackStore.tracks.slice(3).map(track => <div className={`track extra-track ${track.expanded ? 'expanded' : ''}`} key={track.id}><TrackControls track={track} active={trackStore.activeId === track.id} onActivate={() => trackStore.setActiveId(track.id)} onChange={patch => trackStore.updateTrack(track.id, patch)} onDelete={() => trackStore.deleteTrack(track.id)}/><div className="track-canvas">{track.buffer ? <><Waveform buffer={track.buffer} selection={[0, track.buffer.duration]} currentTime={currentTime} onSelection={() => undefined} onSeek={seek}/><ClipControls track={track} onChange={patch => trackStore.updateTrack(track.id, patch)}/></> : <button className="video-empty" onClick={() => requestImport(track.id)}><Upload/><span>导入音频</span></button>}</div></div>)}
+        <div className={`track ${trackStore.tracks[0].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[0]} active={trackStore.activeId === 'track-1'} onActivate={() => trackStore.setActiveId('track-1')} onChange={patch => trackStore.updateTrack('track-1', patch)}/><div className="track-canvas">{buffer ? <><Waveform buffer={buffer} selection={selection} currentTime={currentTime} onSelection={setSelection} onSeek={seek}/><ClipControls track={trackStore.tracks[0]} onChange={patch => trackStore.updateTrack('track-1', patch)} onApplyPitch={() => applyPitch('track-1')}/></> : <button className="empty" onClick={() => requestImport('main')}><Upload/><strong>导入音频，开始创作</strong><span>视频可从右侧监看区导入</span></button>}</div></div>
+        <div className={`track video-audio-track ${trackStore.tracks[1].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[1]} active={trackStore.activeId === 'video-1'} onActivate={() => trackStore.setActiveId('video-1')} onChange={patch => trackStore.updateTrack('video-1', patch)} onExtract={trackStore.tracks[1].buffer ? extractVideoToMain : undefined}/><div className="track-canvas">{trackStore.tracks[1].buffer ? <><Waveform buffer={trackStore.tracks[1].buffer} selection={[0, trackStore.tracks[1].buffer.duration]} currentTime={currentTime} onSelection={() => undefined} onSeek={seek}/><ClipControls track={trackStore.tracks[1]} onChange={patch => trackStore.updateTrack('video-1', patch)} onApplyPitch={() => applyPitch('video-1')}/></> : <button className="video-empty" onClick={() => requestImport('video-1')}><Video/><span>导入视频，原声显示在此轨</span></button>}</div></div>
+        <div className={`track ${trackStore.tracks[2].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[2]} active={trackStore.activeId === 'track-3'} onActivate={() => trackStore.setActiveId('track-3')} onChange={patch => trackStore.updateTrack('track-3', patch)}/><div className="track-canvas">{trackStore.tracks[2].buffer ? <><Waveform buffer={trackStore.tracks[2].buffer} selection={[0, trackStore.tracks[2].buffer.duration]} currentTime={currentTime} onSelection={() => undefined} onSeek={seek}/><ClipControls track={trackStore.tracks[2]} onChange={patch => trackStore.updateTrack('track-3', patch)} onApplyPitch={() => applyPitch('track-3')}/></> : <button className="video-empty" onClick={() => requestImport('music')}><Music2/><span>导入背景音乐</span></button>}</div></div>
+        {trackStore.tracks.slice(3).map(track => <div className={`track extra-track ${track.expanded ? 'expanded' : ''}`} key={track.id}><TrackControls track={track} active={trackStore.activeId === track.id} onActivate={() => trackStore.setActiveId(track.id)} onChange={patch => trackStore.updateTrack(track.id, patch)} onDelete={() => trackStore.deleteTrack(track.id)}/><div className="track-canvas">{track.buffer ? <><Waveform buffer={track.buffer} selection={[0, track.buffer.duration]} currentTime={currentTime} onSelection={() => undefined} onSeek={seek}/><ClipControls track={track} onChange={patch => trackStore.updateTrack(track.id, patch)} onApplyPitch={() => applyPitch(track.id)}/></> : <button className="video-empty" onClick={() => requestImport(track.id)}><Upload/><span>导入音频</span></button>}</div></div>)}
         <button className="add-audio-track" onClick={addAudioTrack}><Plus/>添加音频轨道</button>
         <div className="privacy"><LockKeyhole/> 默认本地处理；仅开启 AI 识别时上传临时片段</div>
         </div>
@@ -263,6 +288,7 @@ export default function App() {
         {inspectorTab === 'properties' ? <div className="properties-panel">
           <label>音频名称<input value={fileName} onChange={e => setFileName(e.target.value)}/></label>
           <div className="info-row"><span>时长</span><b>{formatTime(buffer?.duration ?? 0, true)}</b></div><hr/>
+          <div className="stem-separation"><div><strong>人声 / 伴奏分离</strong><span>本地快速立体声分离</span></div><button onClick={separateActiveTrack} disabled={!trackStore.activeTrack.buffer}><UserRound/><AudioLines/>生成两条轨道</button></div><hr/>
           <label>总控音量 <output>{Math.round(masterVolume * 100)}%</output><input type="range" min="0" max="2" step=".01" value={masterVolume} onChange={e => setMasterVolume(+e.target.value)}/></label>
           <label>淡入 <output>{settings.fadeIn.toFixed(1)}s</output><input type="range" min="0" max="10" step=".1" value={settings.fadeIn} onChange={e => setSettings({...settings, fadeIn: +e.target.value})}/></label>
           <label>淡出 <output>{settings.fadeOut.toFixed(1)}s</output><input type="range" min="0" max="10" step=".1" value={settings.fadeOut} onChange={e => setSettings({...settings, fadeOut: +e.target.value})}/></label>

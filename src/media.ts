@@ -1,5 +1,7 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg'
-import { fetchFile, toBlobURL } from '@ffmpeg/util'
+import { fetchFile } from '@ffmpeg/util'
+const coreURL = new URL('../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.js', import.meta.url).href
+const wasmURL = new URL('../node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', import.meta.url).href
 
 export type AudioExportFormat = 'wav' | 'mp3' | 'm4a' | 'flac' | 'ogg'
 let ffmpegPromise: Promise<FFmpeg> | null = null
@@ -7,8 +9,14 @@ let ffmpegPromise: Promise<FFmpeg> | null = null
 async function getFFmpeg() {
   if (!ffmpegPromise) ffmpegPromise = (async () => {
     const ffmpeg = new FFmpeg()
-    const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm'
-    await ffmpeg.load({ coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm') })
+    const parts = await Promise.all([0, 1].map(async index => {
+      const response = await fetch(`${wasmURL}.part${index}`)
+      if (!response.ok) throw new Error(`FFmpeg 核心分片加载失败：${response.status}`)
+      return response.arrayBuffer()
+    }))
+    const localWasmURL = URL.createObjectURL(new Blob(parts, { type: 'application/wasm' }))
+    try { await ffmpeg.load({ coreURL, wasmURL: localWasmURL }) }
+    finally { URL.revokeObjectURL(localWasmURL) }
     return ffmpeg
   })()
   return ffmpegPromise
@@ -45,13 +53,13 @@ export async function convertWav(wav: Blob, format: Exclude<AudioExportFormat, '
   } finally { await ffmpeg.deleteFile(input).catch(() => undefined); await ffmpeg.deleteFile(output).catch(() => undefined) }
 }
 
-export async function pitchShiftWav(wav: Blob, semitones: number) {
+export async function pitchShiftWav(wav: Blob, semitones: number, sampleRate = 44100) {
   if (Math.abs(semitones) < .01) return wav
   const ffmpeg = await getFFmpeg(), id = Date.now().toString(36), input = `pitch-${id}.wav`, output = `pitched-${id}.wav`
   const factor = 2 ** (semitones / 12), compensate = 1 / factor
   await ffmpeg.writeFile(input, await fetchFile(wav))
   try {
-    await ffmpeg.exec(['-i', input, '-af', `asetrate=44100*${factor.toFixed(8)},aresample=44100,atempo=${compensate.toFixed(8)}`, '-ar', '44100', '-acodec', 'pcm_s16le', output])
+    await ffmpeg.exec(['-i', input, '-af', `asetrate=${sampleRate}*${factor.toFixed(8)},aresample=${sampleRate},atempo=${compensate.toFixed(8)}`, '-ar', String(sampleRate), '-acodec', 'pcm_s16le', output])
     const data = await ffmpeg.readFile(output)
     if (typeof data === 'string') throw new Error('歌曲变调失败')
     return new Blob([data.slice().buffer], { type: 'audio/wav' })
