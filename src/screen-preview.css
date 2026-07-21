@@ -1,0 +1,29 @@
+.capture-preview {
+  position: relative;
+}
+
+.capture-preview video {
+  display: block;
+  background: #02070b;
+}
+
+.start-screen-preview {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 14px;
+  color: #071518;
+  background: #72e5df;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 7px 24px #0009;
+}
+
+.start-screen-preview svg {
+  width: 15px;
+}
