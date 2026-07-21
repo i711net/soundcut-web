@@ -26,7 +26,10 @@ export type ProjectSettings = {
   language: string
   contentMode: 'speech' | 'song'
   exportFormat: string
+  markers?: TimelineMarker[]
 }
+
+export type TimelineMarker = { id: string; name: string; time: number; end?: number; color: string }
 
 export type StoredProject = {
   format: 'soundcut-project'

@@ -34,7 +34,9 @@ import './audio-effects.css'
 import { defaultAudioEffects } from './audio-effects'
 import './speed-pitch.css'
 import './multi-selection.css'
-import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
+import MarkerPanel from './MarkerPanel'
+import './markers.css'
+import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject, type TimelineMarker } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
 
@@ -63,6 +65,7 @@ export default function App() {
   const [compactTracks, setCompactTracks] = useState(false)
   const [selectedClipId, setSelectedClipId] = useState('')
   const [selectedClipIds, setSelectedClipIds] = useState<string[]>([])
+  const [markers, setMarkers] = useState<TimelineMarker[]>([])
   const [status, setStatus] = useState('准备就绪')
   const [inspectorTab, setInspectorTab] = useState<'properties' | 'transcript'>('properties')
   const [language, setLanguage] = useState('auto')
@@ -119,7 +122,7 @@ export default function App() {
     return () => window.cancelAnimationFrame(restart)
   }, [trackStore.tracks, mixerPlayback.playFrom])
 
-  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat })
+  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers })
   const applyProject = (project: StoredProject, recovered = false) => {
     mixerPlayback.stop()
     const restored = deserializeProject(project), value = restored.settings
@@ -128,7 +131,7 @@ export default function App() {
     skipBufferSync.current = true; setBuffer(main?.buffer || null)
     setFileName(value.fileName || '未命名项目'); setSelection(value.selection || [0, 0]); setSelectedClipId(value.selectedClipId || '')
     setSpeed(value.speed || 1); setMasterVolume(value.masterVolume ?? 1); setSnapEnabled(value.snapEnabled ?? true); setSnapGap(value.snapGap || 0); setTimelinePadding(value.timelinePadding || 60); setTimelineZoom(value.timelineZoom || 12); setCompactTracks(!!value.compactTracks)
-    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat)
+    setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat); setMarkers(value.markers || [])
     setCurrentTime(0); currentTimeRef.current = 0; setHistory([]); setFuture([]); setStatus(recovered ? `已恢复自动保存：${new Date(project.savedAt).toLocaleString()}` : '工程已打开，可以继续编辑')
   }
   const saveProjectFile = () => {
@@ -159,7 +162,7 @@ export default function App() {
       void saveAutosave(serializeProject(trackStore.tracks, projectSettings())).then(() => setStatus(current => current === '准备就绪' ? '工程已自动保存' : current)).catch(() => setStatus('自动保存失败：浏览器存储空间可能不足'))
     }, 1800)
     return () => window.clearTimeout(timer)
-  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat])
+  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat, markers])
 
   const changeTimelineZoom = (next: number, clientX?: number) => {
     const body = timelineBodyRef.current, clamped = Math.max(6, Math.min(200, next))
@@ -381,6 +384,10 @@ export default function App() {
   }
   const updateVolumeKeyframe = (pointId: string, patch: Partial<{ time: number; value: number }>) => { if (!selectedClip) return; const length = selectedClip.duration / (trackStore.activeTrack.playbackRate * trackStore.activeTrack.clipPlaybackRate * selectedClip.playbackRate); trackStore.updateClip(trackStore.activeId, selectedClip.id, { volumeEnvelope: (selectedClip.volumeEnvelope || []).map(point => point.id === pointId ? { ...point, ...patch, time: Math.max(0, Math.min(length, patch.time ?? point.time)), value: Math.max(0, Math.min(2, patch.value ?? point.value)) } : point).sort((a, b) => a.time - b.time) }) }
   const deleteVolumeKeyframe = (pointId: string) => { if (!selectedClip) return; remember(); trackStore.updateClip(trackStore.activeId, selectedClip.id, { volumeEnvelope: (selectedClip.volumeEnvelope || []).filter(point => point.id !== pointId) }); setStatus('音量关键帧已删除') }
+  const addPointMarker = () => { const marker: TimelineMarker = { id: `marker-${Date.now()}`, name: `标记 ${markers.length + 1}`, time: currentTimeRef.current, color: '#ffd15c' }; setMarkers(items => [...items, marker]); setStatus(`已在 ${formatTime(marker.time, true)} 添加标记`) }
+  const addRegionMarker = () => { if (selection[1] - selection[0] < .01) return setStatus('请先用选择工具拖出一个时间区域'); const marker: TimelineMarker = { id: `region-${Date.now()}`, name: `区域 ${markers.length + 1}`, time: selection[0], end: selection[1], color: '#63ddd6' }; setMarkers(items => [...items, marker]); setStatus(`已标记区域 ${formatTime(marker.time, true)} — ${formatTime(marker.end!, true)}`) }
+  const updateMarker = (id: string, patch: Partial<TimelineMarker>) => setMarkers(items => items.map(marker => marker.id === id ? { ...marker, ...patch } : marker))
+  const deleteMarker = (id: string) => { setMarkers(items => items.filter(marker => marker.id !== id)); setStatus('标记已删除') }
   const separateActiveTrack = () => {
     const track = trackStore.activeTrack
     if (!track.buffer) { setStatus('请先选择含音频的轨道'); return }
@@ -639,6 +646,7 @@ export default function App() {
         <div className="master-controls"><strong>总控</strong><label>速度<PreciseRange ariaLabel="总速度" min={.5} max={2} step={.05} value={speed} onChange={setSpeed}/><output>{speed.toFixed(2)}×</output></label><label>主音量<PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/><output>{Math.round(masterVolume * 100)}%</output></label><button className={`snap-toggle ${snapEnabled ? 'active' : ''}`} onClick={() => setSnapEnabled(value => !value)}>{snapEnabled ? '磁吸连接：开' : '磁吸连接：关'}</button><label className="snap-gap">片段间隔<PreciseRange ariaLabel="磁吸间隔秒数" min={0} max={5} step={.05} value={snapGap} onChange={setSnapGap}/><output>{snapGap.toFixed(2)}s</output></label><button className="extend-timeline" onClick={() => { setTimelinePadding(value => value + 30); setStatus('时间线已向右延长30秒') }}>延长时间线＋30秒</button><button className={`compact-tracks-toggle ${compactTracks ? 'active' : ''}`} onClick={() => setCompactTracks(value => !value)}>{compactTracks ? '紧凑轨道' : '标准轨道'}</button></div>
         <div className={`timeline-body ${compactTracks ? 'compact' : ''}`} ref={timelineBodyRef} onPointerDownCapture={event => { const clip = (event.target as HTMLElement).closest<HTMLElement>('[data-clip-id]'); if (clip?.dataset.clipId) selectClipSet(clip.dataset.clipId, event.ctrlKey || event.metaKey) }} onWheel={timelineWheel} style={{ '--one-second-step': `${1 / timelineDuration * 100}%`, '--five-second-step': `${5 / timelineDuration * 100}%`, '--timeline-pixel-width': `${timelinePixelWidth}px`, '--playhead-px': `${currentTime * timelineZoom}px` } as React.CSSProperties}>
         {selectedClipIds.length > 1 && <div className="multi-selection-bar"><strong>{selectedClipIds.length} 个片段</strong><button onClick={groupSelectedClips}>编组</button><button onClick={ungroupSelectedClips}>取消编组</button><button onClick={duplicateSelectedClips}>复制到新轨</button><button className="danger" onClick={deleteSelectedClips}>批量删除</button></div>}
+        <div className="timeline-marker-layer">{markers.map(marker => <div key={marker.id} className={`timeline-marker ${marker.end !== undefined ? 'region' : ''}`} style={{ '--marker-start': `${marker.time * timelineZoom}px`, '--marker-width': `${Math.max(2, ((marker.end ?? marker.time) - marker.time) * timelineZoom)}px`, '--marker-color': marker.color } as React.CSSProperties}><span>{marker.name}</span></div>)}</div>
         <div className="ruler draggable-ruler" title="按住并拖动以精确定位播放头" style={{ '--ruler-label-step': `${rulerLabelStep / timelineDuration * 100}%` } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}>{Array.from({length: Math.floor(timelineDuration / rulerLabelStep) + 1}, (_, i) => <span key={i}>{formatTime(i * rulerLabelStep)}</span>)}</div>
         <div className="timeline-playhead" style={{ '--playhead': playheadPercent } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}><span>{formatTime(currentTime, true)}</span></div>
         <div className={`track ${trackStore.tracks[0].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[0]} active={trackStore.activeId === 'track-1'} onActivate={() => trackStore.setActiveId('track-1')} onChange={patch => trackStore.updateTrack('track-1', patch)} onApplyPitch={() => applyPitch('track-1')}/><div className="track-canvas">{trackStore.tracks[0].clips.length ? <><TrackClipLane track={trackStore.tracks[0]} timelineDuration={timelineDuration} tool={timelineTool} selection={selection} onSelection={setSelection} selectedClipId={selectedClipId} onSelect={clip => { trackStore.setActiveId('track-1'); setSelectedClipId(clip.id); setSelection([clip.start, clip.start + clip.duration / (trackStore.tracks[0].playbackRate * trackStore.tracks[0].clipPlaybackRate * clip.playbackRate)]) }} onMove={moveTimelineClip} onTrim={trimTimelineClip} onSeek={seek}/></> : <div className="empty" data-track-id="track-1"><strong>空音轨</strong><span>把片段拖到这里</span></div>}</div></div>
@@ -657,6 +665,7 @@ export default function App() {
           <div className="video-monitor-actions"><button onClick={streamSourceUrl ? extractStreamAudio : extractVideoToMain} disabled={streamSourceUrl ? mediaWorking : !trackStore.tracks[1].buffer}><CopyPlus/>{streamSourceUrl && !trackStore.tracks[1].buffer ? '提取网络原声' : '提取到主轨'}</button><button className={trackStore.tracks[1].solo ? 'active' : ''} onClick={isolateVideoAudio} disabled={!trackStore.tracks[1].buffer}><Headphones/>{trackStore.tracks[1].solo ? '取消隔离' : '隔离原声'}</button></div>
         </section>
         <LevelMeters tracks={trackStore.tracks} meters={mixerPlayback.meters}/>
+        <MarkerPanel markers={markers} currentTime={currentTime} selection={selection} onAddPoint={addPointMarker} onAddRegion={addRegionMarker} onChange={updateMarker} onDelete={deleteMarker} onSeek={seek}/>
         <div className="inspector-tabs">
           <button className={inspectorTab === 'properties' ? 'active' : ''} onClick={() => setInspectorTab('properties')}><SlidersHorizontal/>属性</button>
           <button className={inspectorTab === 'transcript' ? 'active' : ''} onClick={() => setInspectorTab('transcript')}><FileText/>文字{transcript.length > 0 && <i>{transcript.length}</i>}</button>
