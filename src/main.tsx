@@ -8,5 +8,9 @@ import './lyrics.css'
 import './media-track.css'
 import './mixer.css'
 import './dynamic-tracks.css'
+import './timeline-layout.css'
+import './advanced-track-controls.css'
+import './recording-stream.css'
+import './effects-controls.css'
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)

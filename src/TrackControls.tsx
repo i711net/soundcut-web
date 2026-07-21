@@ -1,9 +1,10 @@
-import { Check, CopyPlus, Headphones, Volume2, VolumeX } from 'lucide-react'
+import { Check, CopyPlus, Headphones, Minus, Plus, Trash2, Volume2, VolumeX } from 'lucide-react'
 import type { MixerTrack } from './mixer'
+import { voicePresets, type VoicePreset } from './voice-effects'
 
-type Props = { track: MixerTrack; active: boolean; onActivate: () => void; onChange: (patch: Partial<MixerTrack>) => void; onExtract?: () => void }
+type Props = { track: MixerTrack; active: boolean; onActivate: () => void; onChange: (patch: Partial<MixerTrack>) => void; onExtract?: () => void; onDelete?: () => void }
 
-export default function TrackControls({ track, active, onActivate, onChange, onExtract }: Props) {
+export default function TrackControls({ track, active, onActivate, onChange, onExtract, onDelete }: Props) {
   return <div className={`track-controls ${active ? 'active' : ''}`} onClick={onActivate}>
     <span className="track-number">{track.kind === 'video' ? 'V' : track.id.replace(/\D/g, '') || 'A'}</span>
     <strong>{track.name}</strong>
@@ -13,6 +14,12 @@ export default function TrackControls({ track, active, onActivate, onChange, onE
       <button className={track.includeInExport ? 'selected export-on' : ''} aria-pressed={track.includeInExport} title="参与混合导出" onClick={e => { e.stopPropagation(); onChange({ includeInExport: !track.includeInExport }) }}><Check/><span>导出</span></button>
     </div>
     <label className="track-volume">音量<input type="range" min="0" max="2" step=".01" value={track.volume} onClick={e => e.stopPropagation()} onChange={e => onChange({ volume: +e.target.value })}/><output>{Math.round(track.volume * 100)}%</output></label>
+    <label className="track-volume">速度<input type="range" min=".5" max="2" step=".05" value={track.playbackRate} onClick={e => e.stopPropagation()} onChange={e => onChange({ playbackRate: +e.target.value })}/><output>{track.playbackRate.toFixed(2)}×</output></label>
+    <label className="track-effect">变声<select value={track.voicePreset} onClick={e => e.stopPropagation()} onChange={e => onChange({ voicePreset: e.target.value as VoicePreset })}>{voicePresets.map(preset => <option key={preset.value} value={preset.value}>{preset.label}</option>)}</select></label>
+    <div className="track-row-actions">
+      <button title={track.expanded ? '收起编辑区' : '铺开编辑区'} onClick={e => { e.stopPropagation(); onChange({ expanded: !track.expanded }) }}>{track.expanded ? <Minus/> : <Plus/>}<span>{track.expanded ? '收起' : '铺开'}</span></button>
+      {onDelete && <button className="delete-track" title="删除轨道" onClick={e => { e.stopPropagation(); onDelete() }}><Trash2/><span>删除</span></button>}
+    </div>
     {onExtract && <button className="extract-track" onClick={e => { e.stopPropagation(); onExtract() }}><CopyPlus/>提取到主音轨</button>}
   </div>
 }

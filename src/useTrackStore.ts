@@ -19,5 +19,12 @@ export function useTrackStore() {
     if (!video?.buffer || !main) return items
     return items.map(track => track.id === main.id ? { ...track, buffer: video.buffer, name: `${video.name} · 提取音频` } : track.id === video.id ? { ...track, muted: true } : track)
   }), [])
-  return { tracks, activeId, activeTrack, setActiveId, updateTrack, setTrackBuffer, addTrack, extractVideoToMain }
+  const deleteTrack = useCallback((id: string) => setTracks(items => {
+    const target = items.find(track => track.id === id)
+    if (!target || target.kind === 'main' || target.kind === 'video') return items
+    const next = items.filter(track => track.id !== id)
+    setActiveId(current => current === id ? 'track-1' : current)
+    return next
+  }), [])
+  return { tracks, activeId, activeTrack, setActiveId, updateTrack, setTrackBuffer, addTrack, deleteTrack, extractVideoToMain }
 }
