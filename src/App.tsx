@@ -43,6 +43,7 @@ import './performance.css'
 import MidiPanel from './MidiPanel'
 import { parseMidi, renderMidi, type MidiProject } from './midi'
 import './midi.css'
+import './midi-editor.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject, type TimelineMarker } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -698,7 +699,7 @@ export default function App() {
         <MarkerPanel markers={markers} currentTime={currentTime} selection={selection} onAddPoint={addPointMarker} onAddRegion={addRegionMarker} onChange={updateMarker} onDelete={deleteMarker} onSeek={seek}/>
         <ExportPanel format={exportFormat} settings={exportSettings} selectionAvailable={selection[1] - selection[0] >= .01} onFormat={setExportFormat} onChange={setExportSettings}/>
         <PerformancePanel bytes={projectAudioBytes} duration={mixerPlayback.duration} clips={projectClipCount} history={history.length} enabled={performanceMode} onToggle={() => setPerformanceMode(value => !value)} onClearHistory={() => { setHistory([]); setFuture([]); setStatus('撤销与重做历史已清理') }} onReleaseClipboard={() => { setAudioClipboard(null); setStatus('复制粘贴音频缓存已释放') }}/>
-        <MidiPanel project={midiProject} transpose={midiTranspose} instrument={midiInstrument} working={midiWorking} onImport={file => void importMidiFile(file)} onTranspose={setMidiTranspose} onInstrument={setMidiInstrument} onRender={() => void renderMidiTrack()}/>
+        <MidiPanel project={midiProject} transpose={midiTranspose} instrument={midiInstrument} working={midiWorking} onImport={file => void importMidiFile(file)} onTranspose={setMidiTranspose} onInstrument={setMidiInstrument} onProject={setMidiProject} onRender={() => void renderMidiTrack()}/>
         <div className="inspector-tabs">
           <button className={inspectorTab === 'properties' ? 'active' : ''} onClick={() => setInspectorTab('properties')}><SlidersHorizontal/>属性</button>
           <button className={inspectorTab === 'transcript' ? 'active' : ''} onClick={() => setInspectorTab('transcript')}><FileText/>文字{transcript.length > 0 && <i>{transcript.length}</i>}</button>
