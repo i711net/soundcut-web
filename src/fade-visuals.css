@@ -1,0 +1,9 @@
+.clip-fade-curve{position:absolute;z-index:2;top:20px;bottom:0;pointer-events:none;background:linear-gradient(to bottom right,rgba(6,18,24,.72) 0 48%,#7cf3eb 49% 51%,transparent 52%)}
+.clip-fade-curve.fade-in{left:0}
+.clip-fade-curve.fade-out{right:0;transform:scaleX(-1)}
+.clip-fade-curve span{position:absolute;top:3px;left:8px;padding:1px 3px;color:#d8fffc;background:#12343cbb;border-radius:3px;font-size:7px;transform:none!important}
+.clip-fade-curve.fade-out span{left:auto;right:8px;transform:scaleX(-1)!important}
+.clip-fade-handle{position:absolute;z-index:8;top:21px;width:10px;height:10px;background:#8dfff7;border:2px solid #12323a;border-radius:50%;cursor:ew-resize;touch-action:none;box-shadow:0 0 5px #5ce7de}
+.clip-fade-handle.fade-in{left:2px}.clip-fade-handle.fade-out{right:2px}
+.timeline-clip:has(.clip-fade-curve){background-color:#14363f}
+.crossfade-controls{display:grid;grid-template-columns:1fr 82px;gap:7px;padding-top:9px;border-top:1px solid #203744}.crossfade-controls label{position:relative!important;margin:0!important;font-size:9px!important}.crossfade-controls input{width:100%!important;height:30px!important;margin-top:4px!important;padding:0 24px 0 7px!important;color:#e3edef!important;background:#06121a!important;border:1px solid #29424f!important;border-radius:4px!important}.crossfade-controls label span{position:absolute;right:7px;bottom:8px;color:#68818c;font-size:8px}.crossfade-controls button{align-self:end;height:30px;color:#092024;background:#68ddd6;border-radius:4px;font-size:9px;font-weight:800}.crossfade-controls button:hover:not(:disabled){background:#91f7f0}

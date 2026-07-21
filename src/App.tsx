@@ -25,6 +25,7 @@ import './precise-range.css'
 import './snap-controls.css'
 import './clip-inspector.css'
 import './timeline-zoom.css'
+import './fade-visuals.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -42,6 +43,7 @@ export default function App() {
   const [snapGap, setSnapGap] = useState(0)
   const [timelinePadding, setTimelinePadding] = useState(60)
   const [timelineZoom, setTimelineZoom] = useState(12)
+  const [crossfadeDuration, setCrossfadeDuration] = useState(1)
   const [currentTime, setCurrentTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [settings, setSettings] = useState<EditSettings>({ start: 0, end: 0, gain: 1, fadeIn: 0, fadeOut: 0 })
@@ -346,6 +348,21 @@ export default function App() {
       setStatus(selectedClip.pitchSemitones ? '当前片段音高已应用，其他片段不受影响' : '当前片段已恢复原音高')
     } catch { setStatus('当前片段音高处理失败，请尝试较短的 WAV 片段') } finally { setPitchWorkingId('') }
   }
+  const createCrossfade = () => {
+    if (!selectedClip) return setStatus('请先选择要交叉淡化的片段')
+    const track = trackStore.activeTrack, rate = track.playbackRate * track.clipPlaybackRate
+    const ordered = [...track.clips].sort((a, b) => a.start - b.start), index = ordered.findIndex(clip => clip.id === selectedClip.id)
+    const previous = index > 0 ? ordered[index - 1] : null, next = index >= 0 && index < ordered.length - 1 ? ordered[index + 1] : null
+    if (!previous && !next) return setStatus('当前音轨至少需要两个片段才能交叉淡化')
+    remember()
+    if (previous) {
+      const previousLength = previous.duration / (rate * previous.playbackRate), selectedLength = selectedClip.duration / (rate * selectedClip.playbackRate), duration = Math.max(.05, Math.min(crossfadeDuration, previousLength / 2, selectedLength / 2)), previousEnd = previous.start + previousLength
+      trackStore.updateClip(track.id, previous.id, { fadeOut: duration }); trackStore.updateClip(track.id, selectedClip.id, { start: Math.max(0, previousEnd - duration), fadeIn: duration }); setStatus(`已与前一个片段建立 ${duration.toFixed(2)} 秒交叉淡化`)
+    } else if (next) {
+      const selectedLength = selectedClip.duration / (rate * selectedClip.playbackRate), nextLength = next.duration / (rate * next.playbackRate), duration = Math.max(.05, Math.min(crossfadeDuration, selectedLength / 2, nextLength / 2)), selectedEnd = selectedClip.start + selectedLength
+      trackStore.updateClip(track.id, selectedClip.id, { fadeOut: duration }); trackStore.updateClip(track.id, next.id, { start: Math.max(0, selectedEnd - duration), fadeIn: duration }); setStatus(`已与后一个片段建立 ${duration.toFixed(2)} 秒交叉淡化`)
+    }
+  }
   const separateActiveTrack = () => {
     const track = trackStore.activeTrack
     if (!track.buffer) { setStatus('请先选择含音频的轨道'); return }
@@ -596,7 +613,7 @@ export default function App() {
         </div>
         {inspectorTab === 'properties' ? <div className="properties-panel">
           <label>音频名称<input value={fileName} onChange={e => setFileName(e.target.value)}/></label>
-          {selectedClip && <div className="clip-inspector"><strong>当前片段独立属性</strong><span>{selectedClip.name}</span><ClipControls clip={selectedClip} onChange={patch => trackStore.updateClip(trackStore.activeId, selectedClip.id, patch)} onApplyPitch={() => void applySelectedClipPitch()} pitchWorking={pitchWorkingId === `${trackStore.activeId}:${selectedClip.id}`}/></div>}
+          {selectedClip && <div className="clip-inspector"><strong>当前片段独立属性</strong><span>{selectedClip.name}</span><ClipControls clip={selectedClip} onChange={patch => trackStore.updateClip(trackStore.activeId, selectedClip.id, patch)} onApplyPitch={() => void applySelectedClipPitch()} pitchWorking={pitchWorkingId === `${trackStore.activeId}:${selectedClip.id}`}/><div className="crossfade-controls"><label>交叉淡化时长<input type="number" min="0.05" max="30" step="0.05" value={crossfadeDuration} onChange={event => setCrossfadeDuration(Math.max(.05, Number(event.target.value) || .05))}/><span>秒</span></label><button onClick={createCrossfade}>创建交叉淡化</button></div></div>}
           <div className="info-row"><span>时长</span><b>{formatTime(buffer?.duration ?? 0, true)}</b></div><hr/>
           <div className="stem-separation"><div><strong>人声 / 伴奏分离</strong><span>本地快速立体声分离</span></div><button onClick={separateActiveTrack} disabled={!trackStore.activeTrack.buffer}><UserRound/><AudioLines/>生成两条轨道</button></div><hr/>
           <label>总控音量 <output>{Math.round(masterVolume * 100)}%</output><PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/></label>
