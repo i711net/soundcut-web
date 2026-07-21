@@ -64,7 +64,7 @@ export default function App() {
   const currentTimeRef = useRef(0)
   const input = useRef<HTMLInputElement>(null)
   const fragmentInput = useRef<HTMLInputElement>(null)
-  const timelineBodyRef = useRef<HTMLDivElement | null>(null), playheadDrag = useRef({ active: false, resume: false })
+  const timelineBodyRef = useRef<HTMLDivElement | null>(null), playheadDrag = useRef({ active: false })
   const screenRecorder = useRef<MediaRecorder | null>(null), screenStream = useRef<MediaStream | null>(null), screenChunks = useRef<Blob[]>([]), screenTimer = useRef(0)
   const screenPreview = useRef<HTMLVideoElement | null>(null), screenRecordingBlob = useRef<Blob | null>(null), screenRecordingObjectUrl = useRef('')
   const importTarget = useRef('track-1')
@@ -271,14 +271,14 @@ export default function App() {
   }
   const beginPlayheadDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
-    event.preventDefault(); playheadDrag.current = { active: true, resume: mixerPlayback.playing }
+    event.preventDefault(); playheadDrag.current = { active: true }
     mixerPlayback.stop(); stop(); event.currentTarget.setPointerCapture(event.pointerId); scrubPlayhead(event.clientX)
   }
   const movePlayheadDrag = (event: React.PointerEvent<HTMLDivElement>) => { if (playheadDrag.current.active) scrubPlayhead(event.clientX) }
   const endPlayheadDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!playheadDrag.current.active) return
-    scrubPlayhead(event.clientX); const resume = playheadDrag.current.resume; playheadDrag.current = { active: false, resume: false }
-    if (resume) void mixerPlayback.playFrom(currentTimeRef.current)
+    scrubPlayhead(event.clientX); playheadDrag.current = { active: false }
+    setPlaying(false); videoElement.current?.pause(); setStatus('播放头位置已更新；点击主播放键后才会播放')
   }
   const toggleMixerPlayback = async () => {
     if (mixerPlayback.playing) { mixerPlayback.stop(); videoElement.current?.pause(); return }
