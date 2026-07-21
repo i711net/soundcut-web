@@ -5,6 +5,7 @@ export type MixerTrack = {
   name: string
   kind: TrackKind
   buffer: AudioBuffer | null
+  originalBuffer: AudioBuffer | null
   muted: boolean
   solo: boolean
   volume: number
@@ -14,13 +15,17 @@ export type MixerTrack = {
   expanded: boolean
   voicePreset: VoicePreset
   clipVoicePreset: VoicePreset
+  pitchSemitones: number
+  clipPitchSemitones: number
+  appliedPitchSemitones: number
   includeInExport: boolean
 }
 
 export const newTrack = (id: string, name: string, kind: TrackKind, buffer: AudioBuffer | null = null): MixerTrack => ({
-  id, name, kind, buffer, muted: false, solo: false, volume: 1, playbackRate: 1,
+  id, name, kind, buffer, originalBuffer: buffer, muted: false, solo: false, volume: 1, playbackRate: 1,
   clipVolume: 1, clipPlaybackRate: 1, expanded: false, includeInExport: true,
   voicePreset: 'none', clipVoicePreset: 'none',
+  pitchSemitones: 0, clipPitchSemitones: 0, appliedPitchSemitones: 0,
 })
 
 export function audibleTracks(tracks: MixerTrack[]) {

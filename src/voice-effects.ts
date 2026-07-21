@@ -5,6 +5,7 @@ export const voicePresets: Array<{ value: VoicePreset; label: string }> = [
   { value: 'robot', label: '机器人' }, { value: 'female', label: '女声感' }, { value: 'cartoon', label: '卡通高音' },
   { value: 'opera', label: '猴王戏曲感' }, { value: 'deep', label: '憨厚低音' }, { value: 'comedy', label: '喜剧男声' },
 ]
+export const presetPitch: Record<VoicePreset, number> = { none: 0, child: 5, elder: -2, robot: 0, female: 3, cartoon: 7, opera: 2, deep: -5, comedy: -1 }
 
 function effectNode(context: BaseAudioContext, preset: VoicePreset): AudioNode | null {
   if (preset === 'none') return null

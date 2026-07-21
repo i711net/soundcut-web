@@ -44,3 +44,16 @@ export async function convertWav(wav: Blob, format: Exclude<AudioExportFormat, '
     return new Blob([data.slice().buffer], { type: option.mime })
   } finally { await ffmpeg.deleteFile(input).catch(() => undefined); await ffmpeg.deleteFile(output).catch(() => undefined) }
 }
+
+export async function pitchShiftWav(wav: Blob, semitones: number) {
+  if (Math.abs(semitones) < .01) return wav
+  const ffmpeg = await getFFmpeg(), id = Date.now().toString(36), input = `pitch-${id}.wav`, output = `pitched-${id}.wav`
+  const factor = 2 ** (semitones / 12), compensate = 1 / factor
+  await ffmpeg.writeFile(input, await fetchFile(wav))
+  try {
+    await ffmpeg.exec(['-i', input, '-af', `asetrate=44100*${factor.toFixed(8)},aresample=44100,atempo=${compensate.toFixed(8)}`, '-ar', '44100', '-acodec', 'pcm_s16le', output])
+    const data = await ffmpeg.readFile(output)
+    if (typeof data === 'string') throw new Error('歌曲变调失败')
+    return new Blob([data.slice().buffer], { type: 'audio/wav' })
+  } finally { await ffmpeg.deleteFile(input).catch(() => undefined); await ffmpeg.deleteFile(output).catch(() => undefined) }
+}

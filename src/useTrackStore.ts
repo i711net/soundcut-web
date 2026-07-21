@@ -9,7 +9,8 @@ export function useTrackStore() {
   const nextTrackNumber = useRef(4)
   const activeTrack = useMemo(() => tracks.find(track => track.id === activeId) || tracks[0], [activeId, tracks])
   const updateTrack = useCallback((id: string, patch: Partial<MixerTrack>) => setTracks(items => items.map(track => track.id === id ? { ...track, ...patch } : track)), [])
-  const setTrackBuffer = useCallback((id: string, buffer: AudioBuffer | null, name?: string) => setTracks(items => items.map(track => track.id === id ? { ...track, buffer, ...(name ? { name } : {}) } : track)), [])
+  const setTrackBuffer = useCallback((id: string, buffer: AudioBuffer | null, name?: string) => setTracks(items => items.map(track => track.id === id ? { ...track, buffer, originalBuffer: buffer, appliedPitchSemitones: 0, ...(name ? { name } : {}) } : track)), [])
+  const setTrackProcessedBuffer = useCallback((id: string, buffer: AudioBuffer | null, appliedPitchSemitones: number) => setTracks(items => items.map(track => track.id === id ? { ...track, buffer, appliedPitchSemitones } : track)), [])
   const addTrack = useCallback((buffer: AudioBuffer | null = null, name?: string, kind: TrackKind = 'audio') => {
     const id = `track-${nextTrackNumber.current++}`
     setTracks(items => [...items, newTrack(id, name || `音轨 ${items.length + 1}`, kind, buffer)]); setActiveId(id); return id
@@ -26,5 +27,5 @@ export function useTrackStore() {
     setActiveId(current => current === id ? 'track-1' : current)
     return next
   }), [])
-  return { tracks, activeId, activeTrack, setActiveId, updateTrack, setTrackBuffer, addTrack, deleteTrack, extractVideoToMain }
+  return { tracks, activeId, activeTrack, setActiveId, updateTrack, setTrackBuffer, setTrackProcessedBuffer, addTrack, deleteTrack, extractVideoToMain }
 }

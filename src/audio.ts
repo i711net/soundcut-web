@@ -56,3 +56,15 @@ export function formatTime(value: number, precise = false) {
   const ms = Math.floor((safe % 1) * 1000)
   return precise ? `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(ms).padStart(3, '0')}` : `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
+
+export function separateStereo(source: AudioBuffer, mode: 'vocals' | 'instrumental') {
+  if (source.numberOfChannels < 2) throw new Error('单声道音频无法进行快速人声分离')
+  const output = new AudioBuffer({ length: source.length, numberOfChannels: 2, sampleRate: source.sampleRate })
+  const left = source.getChannelData(0), right = source.getChannelData(1), outLeft = output.getChannelData(0), outRight = output.getChannelData(1)
+  for (let i = 0; i < source.length; i++) {
+    const center = (left[i] + right[i]) * .5
+    if (mode === 'vocals') outLeft[i] = outRight[i] = center
+    else { outLeft[i] = left[i] - center; outRight[i] = right[i] - center }
+  }
+  return output
+}
