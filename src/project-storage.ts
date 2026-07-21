@@ -19,6 +19,7 @@ export type ProjectSettings = {
   snapEnabled: boolean
   snapGap: number
   timelinePadding: number
+  timelineZoom?: number
   compactTracks: boolean
   transcript: TranscriptSegment[]
   language: string

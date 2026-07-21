@@ -24,6 +24,7 @@ import PreciseRange from './PreciseRange'
 import './precise-range.css'
 import './snap-controls.css'
 import './clip-inspector.css'
+import './timeline-zoom.css'
 import { deserializeProject, loadAutosave, projectFromFile, projectToBlob, saveAutosave, serializeProject, type ProjectSettings, type StoredProject } from './project-storage'
 
 type Snapshot = { tracks: MixerTrack[]; activeId: string; selection: [number, number] }
@@ -40,6 +41,7 @@ export default function App() {
   const [snapEnabled, setSnapEnabled] = useState(true)
   const [snapGap, setSnapGap] = useState(0)
   const [timelinePadding, setTimelinePadding] = useState(60)
+  const [timelineZoom, setTimelineZoom] = useState(12)
   const [currentTime, setCurrentTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [settings, setSettings] = useState<EditSettings>({ start: 0, end: 0, gain: 1, fadeIn: 0, fadeOut: 0 })
@@ -87,7 +89,8 @@ export default function App() {
   const resumeAfterPitch = useRef<{ trackId: string; semitones: number; time: number } | null>(null)
   const mixerPlayback = useMixerPlayback(trackStore.tracks, speed, masterVolume, time => { currentTimeRef.current = time; setCurrentTime(time) })
   const timelineDuration = Math.max(120, mixerPlayback.duration + timelinePadding)
-  const rulerLabelStep = timelineDuration <= 120 ? 5 : timelineDuration <= 300 ? 15 : timelineDuration <= 600 ? 30 : timelineDuration <= 1200 ? 60 : 120
+  const timelinePixelWidth = Math.ceil(timelineDuration * timelineZoom)
+  const rulerLabelStep = timelineZoom >= 140 ? .5 : timelineZoom >= 70 ? 1 : timelineZoom >= 32 ? 2 : timelineZoom >= 16 ? 5 : timelineZoom >= 9 ? 10 : 15
   const videoTrackForPlayback = trackStore.tracks.find(track => track.id === 'video-1')
   const shouldSyncVideoPlayback = !!videoUrl && !!videoTrackForPlayback?.clips.length && !videoTrackForPlayback.muted
   const playheadPercent = Math.min(100, Math.max(0, currentTime / timelineDuration * 100))
@@ -105,7 +108,7 @@ export default function App() {
     return () => window.cancelAnimationFrame(restart)
   }, [trackStore.tracks, mixerPlayback.playFrom])
 
-  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, compactTracks, transcript, language, contentMode, exportFormat })
+  const projectSettings = (): ProjectSettings => ({ fileName, activeId: trackStore.activeId, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat })
   const applyProject = (project: StoredProject, recovered = false) => {
     mixerPlayback.stop()
     const restored = deserializeProject(project), value = restored.settings
@@ -113,7 +116,7 @@ export default function App() {
     const main = restored.tracks.find(track => track.id === 'track-1')
     skipBufferSync.current = true; setBuffer(main?.buffer || null)
     setFileName(value.fileName || '未命名项目'); setSelection(value.selection || [0, 0]); setSelectedClipId(value.selectedClipId || '')
-    setSpeed(value.speed || 1); setMasterVolume(value.masterVolume ?? 1); setSnapEnabled(value.snapEnabled ?? true); setSnapGap(value.snapGap || 0); setTimelinePadding(value.timelinePadding || 60); setCompactTracks(!!value.compactTracks)
+    setSpeed(value.speed || 1); setMasterVolume(value.masterVolume ?? 1); setSnapEnabled(value.snapEnabled ?? true); setSnapGap(value.snapGap || 0); setTimelinePadding(value.timelinePadding || 60); setTimelineZoom(value.timelineZoom || 12); setCompactTracks(!!value.compactTracks)
     setTranscript(value.transcript || []); setLanguage(value.language || 'auto'); setContentMode(value.contentMode || 'speech'); setExportFormat((value.exportFormat || 'wav') as AudioExportFormat)
     setCurrentTime(0); currentTimeRef.current = 0; setHistory([]); setFuture([]); setStatus(recovered ? `已恢复自动保存：${new Date(project.savedAt).toLocaleString()}` : '工程已打开，可以继续编辑')
   }
@@ -145,7 +148,29 @@ export default function App() {
       void saveAutosave(serializeProject(trackStore.tracks, projectSettings())).then(() => setStatus(current => current === '准备就绪' ? '工程已自动保存' : current)).catch(() => setStatus('自动保存失败：浏览器存储空间可能不足'))
     }, 1800)
     return () => window.clearTimeout(timer)
-  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, compactTracks, transcript, language, contentMode, exportFormat])
+  }, [trackStore.tracks, trackStore.activeId, fileName, selection, selectedClipId, speed, masterVolume, snapEnabled, snapGap, timelinePadding, timelineZoom, compactTracks, transcript, language, contentMode, exportFormat])
+
+  const changeTimelineZoom = (next: number, clientX?: number) => {
+    const body = timelineBodyRef.current, clamped = Math.max(6, Math.min(200, next))
+    if (!body || clamped === timelineZoom) return setTimelineZoom(clamped)
+    const rect = body.getBoundingClientRect(), gutter = window.innerWidth <= 780 ? 92 : window.innerWidth <= 1050 ? 106 : 130
+    const anchorX = clientX === undefined ? Math.max(gutter, Math.min(body.clientWidth, gutter + currentTimeRef.current * timelineZoom - body.scrollLeft)) : Math.max(gutter, Math.min(body.clientWidth, clientX - rect.left))
+    const anchorTime = Math.max(0, (body.scrollLeft + anchorX - gutter) / timelineZoom)
+    setTimelineZoom(clamped)
+    window.requestAnimationFrame(() => { body.scrollLeft = Math.max(0, anchorTime * clamped - (anchorX - gutter)) })
+  }
+  const timelineWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!event.ctrlKey && !event.metaKey) return
+    event.preventDefault(); changeTimelineZoom(timelineZoom * (event.deltaY < 0 ? 1.15 : 1 / 1.15), event.clientX)
+  }
+
+  useEffect(() => {
+    if (!mixerPlayback.playing) return
+    const body = timelineBodyRef.current, playhead = body?.querySelector<HTMLElement>('.timeline-playhead')
+    if (!body || !playhead) return
+    const x = playhead.offsetLeft
+    if (x < body.scrollLeft + 150 || x > body.scrollLeft + body.clientWidth - 80) body.scrollTo({ left: Math.max(0, x - body.clientWidth * .35), behavior: 'smooth' })
+  }, [currentTime, mixerPlayback.playing])
 
   const loadFile = async (file?: File) => {
     if (!file) return
@@ -534,7 +559,7 @@ export default function App() {
         <AudioEditToolbar disabled={!trackStore.activeTrack.clips.length} canPaste={!!audioClipboard} onCut={cutSelection} onCopy={copySelection} onPaste={pasteAudio} onDelete={deleteSelection} onTrim={keepSelection} onSplit={splitAtPlayhead} onDuplicate={duplicateSelectionToTrack} onImport={() => fragmentInput.current?.click()} onMerge={() => void mergeSelectedTracks()} onSilence={() => transformSelection('silence', '静音')} onReverse={() => transformSelection('reverse', '反转')} onNormalize={() => transformSelection('normalize', '标准化')} onFadeIn={() => transformSelection('fadeIn', '淡入')} onFadeOut={() => transformSelection('fadeOut', '淡出')} effectScope={effectScope} voicePreset={pendingVoicePreset} pitchSemitones={activePitchSemitones} onEffectScope={setEffectScope} onVoicePreset={setPendingVoicePreset} onApplyVoice={() => void confirmVoicePreset()} onRestoreVoice={restoreOriginalVoice} onPitchSemitones={changePitchSemitones} onApplyPitch={() => void applyCentralPitch()}/>
         <ChannelEditor disabled={!selectedClip} channels={selectedClip?.buffer.numberOfChannels || 0} leftGain={channelMix.leftGain} rightGain={channelMix.rightGain} pan={channelMix.pan} onLeftGain={leftGain => setChannelMix(value => ({ ...value, leftGain }))} onRightGain={rightGain => setChannelMix(value => ({ ...value, rightGain }))} onPan={pan => setChannelMix(value => ({ ...value, pan }))} onApply={() => applyChannelProcess({}, '左右音量与声像')} onAction={channelAction}/>
         <div className="master-controls"><strong>总控</strong><label>速度<PreciseRange ariaLabel="总速度" min={.5} max={2} step={.05} value={speed} onChange={setSpeed}/><output>{speed.toFixed(2)}×</output></label><label>主音量<PreciseRange ariaLabel="主音量" min={0} max={2} step={.01} value={masterVolume} onChange={setMasterVolume}/><output>{Math.round(masterVolume * 100)}%</output></label><button className={`snap-toggle ${snapEnabled ? 'active' : ''}`} onClick={() => setSnapEnabled(value => !value)}>{snapEnabled ? '磁吸连接：开' : '磁吸连接：关'}</button><label className="snap-gap">片段间隔<PreciseRange ariaLabel="磁吸间隔秒数" min={0} max={5} step={.05} value={snapGap} onChange={setSnapGap}/><output>{snapGap.toFixed(2)}s</output></label><button className="extend-timeline" onClick={() => { setTimelinePadding(value => value + 30); setStatus('时间线已向右延长30秒') }}>延长时间线＋30秒</button><button className={`compact-tracks-toggle ${compactTracks ? 'active' : ''}`} onClick={() => setCompactTracks(value => !value)}>{compactTracks ? '紧凑轨道' : '标准轨道'}</button></div>
-        <div className={`timeline-body ${compactTracks ? 'compact' : ''}`} ref={timelineBodyRef} style={{ '--one-second-step': `${1 / timelineDuration * 100}%`, '--five-second-step': `${5 / timelineDuration * 100}%` } as React.CSSProperties}>
+        <div className={`timeline-body ${compactTracks ? 'compact' : ''}`} ref={timelineBodyRef} onWheel={timelineWheel} style={{ '--one-second-step': `${1 / timelineDuration * 100}%`, '--five-second-step': `${5 / timelineDuration * 100}%`, '--timeline-pixel-width': `${timelinePixelWidth}px`, '--playhead-px': `${currentTime * timelineZoom}px` } as React.CSSProperties}>
         <div className="ruler draggable-ruler" title="按住并拖动以精确定位播放头" style={{ '--ruler-label-step': `${rulerLabelStep / timelineDuration * 100}%` } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}>{Array.from({length: Math.floor(timelineDuration / rulerLabelStep) + 1}, (_, i) => <span key={i}>{formatTime(i * rulerLabelStep)}</span>)}</div>
         <div className="timeline-playhead" style={{ '--playhead': playheadPercent } as React.CSSProperties} onPointerDown={beginPlayheadDrag} onPointerMove={movePlayheadDrag} onPointerUp={endPlayheadDrag} onPointerCancel={endPlayheadDrag}><span>{formatTime(currentTime, true)}</span></div>
         <div className={`track ${trackStore.tracks[0].expanded ? 'expanded' : ''}`}><TrackControls track={trackStore.tracks[0]} active={trackStore.activeId === 'track-1'} onActivate={() => trackStore.setActiveId('track-1')} onChange={patch => trackStore.updateTrack('track-1', patch)} onApplyPitch={() => applyPitch('track-1')}/><div className="track-canvas">{trackStore.tracks[0].clips.length ? <><TrackClipLane track={trackStore.tracks[0]} timelineDuration={timelineDuration} tool={timelineTool} selection={selection} onSelection={setSelection} selectedClipId={selectedClipId} onSelect={clip => { trackStore.setActiveId('track-1'); setSelectedClipId(clip.id); setSelection([clip.start, clip.start + clip.duration / (trackStore.tracks[0].playbackRate * trackStore.tracks[0].clipPlaybackRate * clip.playbackRate)]) }} onMove={moveTimelineClip} onTrim={trimTimelineClip} onSeek={seek}/></> : <div className="empty" data-track-id="track-1"><strong>空音轨</strong><span>把片段拖到这里</span></div>}</div></div>
@@ -572,6 +597,6 @@ export default function App() {
     </main>
 
     {screenStage !== 'idle' && <div className="capture-overlay"><section className="capture-dialog" role="dialog" aria-modal="true" aria-label="屏幕录制"><div className="capture-title"><div><h2>屏幕录制</h2><p>{screenStage === 'selecting' ? '请在浏览器弹窗中选择屏幕、窗口或标签页' : screenStage === 'ready' ? '预录制状态：先播放要录制的内容，再点击开始录制' : screenStage === 'recording' ? '正在录制共享画面' : screenStage === 'finished' ? '录制完成，可以保存或导入剪辑' : screenError}</p></div><span className={`stage-badge ${screenStage}`}>{screenStage === 'selecting' ? '选择来源' : screenStage === 'ready' ? '预录制' : screenStage === 'recording' ? `录制中 ${formatTime(screenRecordingSeconds)}` : screenStage === 'finished' ? '已完成' : '发生错误'}</span></div><div className="capture-preview">{screenStage === 'finished' && screenRecordingUrl ? <video src={screenRecordingUrl} controls playsInline/> : screenStage === 'ready' || screenStage === 'recording' ? <><video ref={attachScreenPreview} muted autoPlay playsInline onLoadedData={event => { setScreenPreviewPlaying(true); void event.currentTarget.play().catch(() => setScreenPreviewPlaying(false)) }}/>{!screenPreviewPlaying && <button className="start-screen-preview" onClick={() => attachScreenPreview(screenPreview.current)}><Play/>显示共享画面</button>}</> : <div className="capture-placeholder"><MonitorUp/><span>{screenStage === 'selecting' ? '等待选择录制来源…' : screenError}</span></div>}</div><div className="capture-note">提示：录制网页视频时优先选择“浏览器标签页”，并在共享弹窗中开启“同时共享标签页音频”。</div><div className="capture-actions">{screenStage === 'ready' && <><button onClick={resetScreenRecording}>取消</button><button className="primary" onClick={startScreenRecording}><span className="record-dot"/>开始录制</button></>}{screenStage === 'recording' && <button className="danger" onClick={stopScreenRecording}><Square fill="currentColor"/>停止录制</button>}{screenStage === 'finished' && <><button onClick={resetScreenRecording}>关闭</button><button onClick={saveScreenRecording}><Download/>保存视频</button><button className="primary" onClick={importScreenRecording}><Video/>导入剪辑</button></>}{screenStage === 'error' && <><button onClick={resetScreenRecording}>关闭</button><button className="primary" onClick={() => { resetScreenRecording(); window.setTimeout(() => void prepareScreenRecording(), 0) }}><MonitorUp/>重新选择</button></>}</div></section></div>}
-    <footer><div className="time"><strong>{formatTime(currentTime, true)}</strong><span>/ {formatTime(mixerPlayback.duration, true)}</span></div><div className="transport"><button title="返回00:00开头" aria-label="返回开头" onClick={() => seek(0)}><Rewind/></button><button title="后退5秒" aria-label="后退5秒" onClick={() => seek(Math.max(0, currentTime - 5))}><SkipBack/></button><button className="play" aria-label={mixerPlayback.playing ? '暂停' : '播放'} onClick={toggleMixerPlayback}>{mixerPlayback.playing ? <Pause fill="currentColor"/> : <Play fill="currentColor"/>}</button><button title="前进5秒" aria-label="前进5秒" onClick={() => seek(Math.min(mixerPlayback.duration, currentTime + 5))}><SkipForward/></button></div><div className="zoom"><ZoomOut/><input type="range" defaultValue="60"/><ZoomIn/></div><div className="status"><RotateCcw/>{status}</div></footer>
+    <footer><div className="time"><strong>{formatTime(currentTime, true)}</strong><span>/ {formatTime(mixerPlayback.duration, true)}</span></div><div className="transport"><button title="返回00:00开头" aria-label="返回开头" onClick={() => seek(0)}><Rewind/></button><button title="后退5秒" aria-label="后退5秒" onClick={() => seek(Math.max(0, currentTime - 5))}><SkipBack/></button><button className="play" aria-label={mixerPlayback.playing ? '暂停' : '播放'} onClick={toggleMixerPlayback}>{mixerPlayback.playing ? <Pause fill="currentColor"/> : <Play fill="currentColor"/>}</button><button title="前进5秒" aria-label="前进5秒" onClick={() => seek(Math.min(mixerPlayback.duration, currentTime + 5))}><SkipForward/></button></div><div className="zoom"><button title="缩小时间线" aria-label="缩小时间线" onClick={() => changeTimelineZoom(timelineZoom / 1.25)}><ZoomOut/></button><input aria-label="时间线缩放" type="range" min="6" max="200" step="1" value={timelineZoom} onChange={event => changeTimelineZoom(Number(event.target.value))}/><button title="放大时间线" aria-label="放大时间线" onClick={() => changeTimelineZoom(timelineZoom * 1.25)}><ZoomIn/></button><output>{Math.round(timelineZoom)} px/s</output></div><div className="status"><RotateCcw/>{status}</div></footer>
   </div>
 }
