@@ -40,8 +40,13 @@ export default function App() {
   const [streamSourceUrl, setStreamSourceUrl] = useState('')
   const [recording, setRecording] = useState(false)
   const [recordingSeconds, setRecordingSeconds] = useState(0)
+  const [micState, setMicState] = useState<'idle' | 'requesting' | 'recording' | 'error'>('idle')
+  const [micError, setMicError] = useState('')
   const [screenRecording, setScreenRecording] = useState(false)
   const [screenRecordingSeconds, setScreenRecordingSeconds] = useState(0)
+  const [screenStage, setScreenStage] = useState<'idle' | 'selecting' | 'ready' | 'recording' | 'finished' | 'error'>('idle')
+  const [screenError, setScreenError] = useState('')
+  const [screenRecordingUrl, setScreenRecordingUrl] = useState('')
   const [captureSize, setCaptureSize] = useState<'source' | '720' | '1080'>('1080')
   const [pitchWorkingId, setPitchWorkingId] = useState('')
   const audioContext = useRef<AudioContext | null>(null), source = useRef<AudioBufferSourceNode | null>(null), startedAt = useRef(0), offset = useRef(0), frame = useRef(0)
@@ -50,6 +55,7 @@ export default function App() {
   const input = useRef<HTMLInputElement>(null)
   const recorder = useRef<MediaRecorder | null>(null), recorderStream = useRef<MediaStream | null>(null), recordingChunks = useRef<Blob[]>([]), recordingTimer = useRef(0)
   const screenRecorder = useRef<MediaRecorder | null>(null), screenStream = useRef<MediaStream | null>(null), screenChunks = useRef<Blob[]>([]), screenTimer = useRef(0)
+  const screenPreview = useRef<HTMLVideoElement | null>(null), screenRecordingBlob = useRef<Blob | null>(null), screenRecordingObjectUrl = useRef('')
   const importTarget = useRef('track-1')
   const preserveMainPitch = useRef<number | null>(null)
   const mixerPlayback = useMixerPlayback(trackStore.tracks, speed, masterVolume, time => { currentTimeRef.current = time; setCurrentTime(time) })
@@ -57,7 +63,7 @@ export default function App() {
   const playheadPercent = Math.min(100, Math.max(0, currentTime / timelineDuration * 100))
   const playheadPosition = `calc(${playheadPercent}% + ${120 * (1 - playheadPercent / 100)}px)`
 
-  useEffect(() => () => { source.current?.stop(); cancelAnimationFrame(frame.current); clearInterval(recordingTimer.current); clearInterval(screenTimer.current); recorderStream.current?.getTracks().forEach(track => track.stop()); screenStream.current?.getTracks().forEach(track => track.stop()); audioContext.current?.close(); if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current) }, [])
+  useEffect(() => () => { source.current?.stop(); cancelAnimationFrame(frame.current); clearInterval(recordingTimer.current); clearInterval(screenTimer.current); recorderStream.current?.getTracks().forEach(track => track.stop()); screenStream.current?.getTracks().forEach(track => track.stop()); audioContext.current?.close(); if (videoObjectUrl.current) URL.revokeObjectURL(videoObjectUrl.current); if (screenRecordingObjectUrl.current) URL.revokeObjectURL(screenRecordingObjectUrl.current) }, [])
   useEffect(() => { if (videoElement.current) videoElement.current.playbackRate = speed * trackStore.tracks[1].playbackRate * trackStore.tracks[1].clipPlaybackRate }, [speed, trackStore.tracks])
   useEffect(() => { currentTimeRef.current = currentTime }, [currentTime])
   useEffect(() => { if (preserveMainPitch.current !== null) { trackStore.setTrackProcessedBuffer('track-1', buffer, preserveMainPitch.current); preserveMainPitch.current = null } else trackStore.setTrackBuffer('track-1', buffer) }, [buffer, trackStore.setTrackBuffer, trackStore.setTrackProcessedBuffer])
@@ -107,13 +113,14 @@ export default function App() {
   }
   const toggleRecording = async () => {
     if (recording) { recorder.current?.stop(); return }
+    setMicState('requesting'); setMicError(''); setStatus('正在请求麦克风权限…')
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
       recorderStream.current = stream; recordingChunks.current = []
       const mediaRecorder = new MediaRecorder(stream); recorder.current = mediaRecorder
       mediaRecorder.ondataavailable = event => { if (event.data.size) recordingChunks.current.push(event.data) }
       mediaRecorder.onstop = async () => {
-        clearInterval(recordingTimer.current); stream.getTracks().forEach(track => track.stop()); recorderStream.current = null; setRecording(false)
+        clearInterval(recordingTimer.current); stream.getTracks().forEach(track => track.stop()); recorderStream.current = null; setRecording(false); setMicState('idle')
         try {
           const blob = new Blob(recordingChunks.current, { type: mediaRecorder.mimeType || 'audio/webm' })
           const ctx = audioContext.current ?? new AudioContext(); audioContext.current = ctx
@@ -121,12 +128,22 @@ export default function App() {
           trackStore.addTrack(decoded, name); setFileName(name); setCurrentTime(0); setStatus('录音已加入新音轨')
         } catch { setStatus('无法解析本次录音，请更换浏览器后重试') }
       }
-      mediaRecorder.start(250); setRecordingSeconds(0); setRecording(true); setStatus('正在录音…')
+      mediaRecorder.start(250); setRecordingSeconds(0); setRecording(true); setMicState('recording'); setStatus('正在录音…')
       recordingTimer.current = window.setInterval(() => setRecordingSeconds(value => value + 1), 1000)
-    } catch { setStatus('无法使用麦克风：请允许浏览器麦克风权限') }
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : ''
+      const message = name === 'NotAllowedError' ? '麦克风权限被拒绝。请点击地址栏左侧的权限图标，允许麦克风后重试。' : name === 'NotFoundError' ? '没有找到可用的麦克风，请连接麦克风后重试。' : name === 'NotReadableError' ? '麦克风正被其他程序占用，请关闭占用程序后重试。' : '无法启动麦克风，请确认浏览器允许本站使用麦克风。'
+      setMicError(message); setMicState('error'); setStatus(message)
+    }
   }
-  const toggleScreenRecording = async () => {
-    if (screenRecording) { screenRecorder.current?.stop(); return }
+  const resetScreenRecording = () => {
+    clearInterval(screenTimer.current); screenStream.current?.getTracks().forEach(track => track.stop()); screenStream.current = null; screenRecorder.current = null
+    if (screenRecordingObjectUrl.current) URL.revokeObjectURL(screenRecordingObjectUrl.current)
+    screenRecordingObjectUrl.current = ''; screenRecordingBlob.current = null; setScreenRecordingUrl(''); setScreenRecording(false); setScreenRecordingSeconds(0); setScreenStage('idle'); setScreenError('')
+  }
+  const prepareScreenRecording = async () => {
+    if (screenStage !== 'idle' && screenStage !== 'error') return
+    setScreenStage('selecting'); setScreenError(''); setStatus('请选择要录制的屏幕、窗口或浏览器标签页…')
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 } }, audio: true })
       const videoTrack = stream.getVideoTracks()[0]
@@ -135,22 +152,49 @@ export default function App() {
         await videoTrack.applyConstraints({ width: { ideal: size.width }, height: { ideal: size.height } }).catch(() => undefined)
       }
       screenStream.current = stream; screenChunks.current = []
+      videoTrack?.addEventListener('ended', () => {
+        if (screenRecorder.current?.state === 'recording') screenRecorder.current.stop()
+        else resetScreenRecording()
+      }, { once: true })
+      setScreenStage('ready'); setStatus('屏幕来源已准备好；播放目标内容后点击“开始录制”')
+      window.setTimeout(() => { if (screenPreview.current) { screenPreview.current.srcObject = stream; void screenPreview.current.play().catch(() => undefined) } }, 0)
+    } catch (error) {
+      const message = error instanceof DOMException && error.name === 'NotAllowedError' ? '你取消了屏幕选择，或没有授予屏幕共享权限。' : '无法准备屏幕录制，请使用最新版 Chrome 或 Edge。'
+      setScreenError(message); setScreenStage('error'); setStatus(message)
+    }
+  }
+  const startScreenRecording = () => {
+    const stream = screenStream.current
+    if (!stream || !stream.active) { setScreenError('共享来源已经关闭，请重新选择。'); setScreenStage('error'); return }
+    try {
       const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm'
       const mediaRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: captureSize === '720' ? 4_000_000 : 8_000_000 })
       screenRecorder.current = mediaRecorder
       mediaRecorder.ondataavailable = event => { if (event.data.size) screenChunks.current.push(event.data) }
-      mediaRecorder.onstop = async () => {
+      mediaRecorder.onstop = () => {
         clearInterval(screenTimer.current); stream.getTracks().forEach(track => track.stop()); screenStream.current = null; setScreenRecording(false)
         const blob = new Blob(screenChunks.current, { type: mediaRecorder.mimeType || 'video/webm' })
-        if (!blob.size) { setStatus('屏幕录制没有生成内容'); return }
-        const name = `屏幕录制-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.webm`
-        importTarget.current = 'video-1'; await loadFile(new File([blob], name, { type: 'video/webm' }))
-        setStatus('屏幕录制已进入视频监看区，原声已加入视频轨')
+        if (!blob.size) { setScreenError('屏幕录制没有生成内容'); setScreenStage('error'); setStatus('屏幕录制没有生成内容'); return }
+        screenRecordingBlob.current = blob
+        if (screenRecordingObjectUrl.current) URL.revokeObjectURL(screenRecordingObjectUrl.current)
+        screenRecordingObjectUrl.current = URL.createObjectURL(blob); setScreenRecordingUrl(screenRecordingObjectUrl.current); setScreenStage('finished'); setStatus('录制完成：可以保存视频或导入剪辑')
       }
-      videoTrack?.addEventListener('ended', () => { if (mediaRecorder.state === 'recording') mediaRecorder.stop() }, { once: true })
       mediaRecorder.start(500); setScreenRecordingSeconds(0); setScreenRecording(true); setStatus('正在录制屏幕；系统声音取决于共享弹窗中的音频选项')
+      setScreenStage('recording')
       screenTimer.current = window.setInterval(() => setScreenRecordingSeconds(value => value + 1), 1000)
-    } catch { setStatus('屏幕录制已取消，或浏览器未授予屏幕共享权限') }
+    } catch { setScreenError('无法开始录制当前共享来源。'); setScreenStage('error') }
+  }
+  const stopScreenRecording = () => { if (screenRecorder.current?.state === 'recording') screenRecorder.current.stop() }
+  const screenRecordingName = () => `屏幕录制-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.webm`
+  const saveScreenRecording = () => {
+    if (!screenRecordingUrl) return
+    const link = document.createElement('a'); link.href = screenRecordingUrl; link.download = screenRecordingName(); link.click(); setStatus('屏幕录制视频已保存')
+  }
+  const importScreenRecording = async () => {
+    const blob = screenRecordingBlob.current
+    if (!blob) return
+    const file = new File([blob], screenRecordingName(), { type: blob.type || 'video/webm' })
+    resetScreenRecording(); importTarget.current = 'video-1'; await loadFile(file); setStatus('录屏已导入视频监看区，原声已加入视频轨')
   }
   const extractVideoToMain = () => {
     const videoBuffer = trackStore.tracks.find(track => track.id === 'video-1')?.buffer
@@ -260,7 +304,7 @@ export default function App() {
   return <div className="app" onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); loadFile(e.dataTransfer.files[0]) }}>
     <header><div className="brand"><span className="brand-mark"><i/><i/><i/><i/><i/></span><b>声刻</b><span>SoundCut</span></div><div className="project">{fileName}</div><div className="header-actions"><button aria-label="撤销" onClick={undo} disabled={!history.length}><Undo2/></button><button aria-label="重做" onClick={redo} disabled={!future.length}><Redo2/></button><button className="export" onClick={exportAudio} disabled={mediaWorking}><Download/> {mediaWorking ? '处理中' : '导出'}</button></div></header>
     <main>
-      <aside className="tools"><button className="import" onClick={() => requestImport('main')}><Upload/>导入媒体</button><input ref={input} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void loadFile(file) }}/><button className={`tool record-tool ${recording ? 'recording' : ''}`} onClick={toggleRecording}>{recording ? <Square fill="currentColor"/> : <Mic/>}<span>{recording ? `停止录音 ${formatTime(recordingSeconds)}` : '麦克风录音'}</span></button><div className="screen-record-config"><button className={`tool ${screenRecording ? 'recording' : ''}`} onClick={toggleScreenRecording}>{screenRecording ? <Square fill="currentColor"/> : <MonitorUp/>}<span>{screenRecording ? `停止录屏 ${formatTime(screenRecordingSeconds)}` : '录制屏幕'}</span></button><select value={captureSize} disabled={screenRecording} onChange={e => setCaptureSize(e.target.value as typeof captureSize)} aria-label="录屏清晰度"><option value="source">原始尺寸</option><option value="720">720p</option><option value="1080">1080p</option></select></div><Tool icon={<MousePointer2/>} label="选择"/><Tool icon={<Scissors/>} label="保留选区" action={keepSelection} disabled={!buffer}/><Tool icon={<Trash2/>} label="删除选区" action={deleteSelection} disabled={!buffer}/><Tool icon={<Waves/>} label="淡入 / 淡出"/><div className="tool-spacer"/><Tool icon={<Undo2/>} label="撤销" action={undo} disabled={!history.length}/><Tool icon={<Redo2/>} label="重做" action={redo} disabled={!future.length}/></aside>
+      <aside className="tools"><button className="import" onClick={() => requestImport('main')}><Upload/>导入媒体</button><input ref={input} type="file" accept="audio/*,video/*" hidden onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void loadFile(file) }}/><button className={`tool record-tool ${recording ? 'recording' : ''}`} onClick={toggleRecording} disabled={micState === 'requesting'}>{recording ? <Square fill="currentColor"/> : <Mic/>}<span>{micState === 'requesting' ? '等待麦克风权限…' : recording ? `停止录音 ${formatTime(recordingSeconds)}` : '麦克风录音'}</span></button><div className="screen-record-config"><button className={`tool ${screenRecording ? 'recording' : ''}`} onClick={screenStage === 'recording' ? stopScreenRecording : screenStage === 'idle' || screenStage === 'error' ? prepareScreenRecording : () => undefined}><MonitorUp/><span>{screenStage === 'selecting' ? '选择录制来源…' : screenStage === 'ready' ? '预录制已就绪' : screenStage === 'recording' ? `录制中 ${formatTime(screenRecordingSeconds)}` : screenStage === 'finished' ? '录制已完成' : '录制屏幕'}</span></button><select value={captureSize} disabled={screenStage !== 'idle' && screenStage !== 'error'} onChange={e => setCaptureSize(e.target.value as typeof captureSize)} aria-label="录屏清晰度"><option value="source">原始尺寸</option><option value="720">720p</option><option value="1080">1080p</option></select></div><Tool icon={<MousePointer2/>} label="选择"/><Tool icon={<Scissors/>} label="保留选区" action={keepSelection} disabled={!buffer}/><Tool icon={<Trash2/>} label="删除选区" action={deleteSelection} disabled={!buffer}/><Tool icon={<Waves/>} label="淡入 / 淡出"/><div className="tool-spacer"/><Tool icon={<Undo2/>} label="撤销" action={undo} disabled={!history.length}/><Tool icon={<Redo2/>} label="重做" action={redo} disabled={!future.length}/></aside>
       <section className="workspace">
         <div className="ruler">{Array.from({length: 9}, (_, i) => <span key={i}>{formatTime(timelineDuration * i / 8)}</span>)}</div>
         <div className="master-controls"><strong>总控</strong><label>速度<input type="range" min=".5" max="2" step=".05" value={speed} onChange={e => setSpeed(+e.target.value)}/><output>{speed.toFixed(2)}×</output></label><label>主音量<input type="range" min="0" max="2" step=".01" value={masterVolume} onChange={e => setMasterVolume(+e.target.value)}/><output>{Math.round(masterVolume * 100)}%</output></label></div>
@@ -298,6 +342,8 @@ export default function App() {
         </div> : <TranscriptPanel fileName={fileName} hasAudio={!!trackStore.activeTrack.buffer} language={language} onLanguage={setLanguage} contentMode={contentMode} onContentMode={setContentMode} segments={transcript} onSegments={setTranscript} onSeek={seek} onTranscribe={transcribe} progress={transcriptionProgress} working={transcribing} error={transcriptionError}/>} 
       </aside>
     </main>
+    {micState !== 'idle' && <div className="capture-overlay mic-overlay"><section className="capture-dialog mic-dialog" role="dialog" aria-modal="true" aria-label="麦克风录音"><div className="capture-heading"><div className={`capture-icon ${recording ? 'live' : ''}`}><Mic/></div><div><h2>麦克风录音</h2><p>{micState === 'requesting' ? '正在等待浏览器授权…' : micState === 'recording' ? '正在录制，结束后会自动加入新的音频轨道。' : micError}</p></div></div>{micState === 'recording' && <div className="recording-clock"><i/>{formatTime(recordingSeconds, true)}</div>}<div className="capture-actions">{micState === 'recording' ? <button className="danger" onClick={toggleRecording}><Square fill="currentColor"/>停止并加入音轨</button> : micState === 'error' ? <><button onClick={() => setMicState('idle')}>关闭</button><button className="primary" onClick={toggleRecording}><Mic/>重新尝试</button></> : <button onClick={() => setMicState('idle')}>隐藏窗口</button>}</div></section></div>}
+    {screenStage !== 'idle' && <div className="capture-overlay"><section className="capture-dialog" role="dialog" aria-modal="true" aria-label="屏幕录制"><div className="capture-title"><div><h2>屏幕录制</h2><p>{screenStage === 'selecting' ? '请在浏览器弹窗中选择屏幕、窗口或标签页' : screenStage === 'ready' ? '预录制状态：先播放要录制的内容，再点击开始录制' : screenStage === 'recording' ? '正在录制共享画面' : screenStage === 'finished' ? '录制完成，可以保存或导入剪辑' : screenError}</p></div><span className={`stage-badge ${screenStage}`}>{screenStage === 'selecting' ? '选择来源' : screenStage === 'ready' ? '预录制' : screenStage === 'recording' ? `录制中 ${formatTime(screenRecordingSeconds)}` : screenStage === 'finished' ? '已完成' : '发生错误'}</span></div><div className="capture-preview">{screenStage === 'finished' && screenRecordingUrl ? <video src={screenRecordingUrl} controls playsInline/> : screenStage === 'ready' || screenStage === 'recording' ? <video ref={screenPreview} muted autoPlay playsInline/> : <div className="capture-placeholder"><MonitorUp/><span>{screenStage === 'selecting' ? '等待选择录制来源…' : screenError}</span></div>}</div><div className="capture-note">提示：录制网页视频时优先选择“浏览器标签页”，并在共享弹窗中开启“同时共享标签页音频”。</div><div className="capture-actions">{screenStage === 'ready' && <><button onClick={resetScreenRecording}>取消</button><button className="primary" onClick={startScreenRecording}><span className="record-dot"/>开始录制</button></>}{screenStage === 'recording' && <button className="danger" onClick={stopScreenRecording}><Square fill="currentColor"/>停止录制</button>}{screenStage === 'finished' && <><button onClick={resetScreenRecording}>关闭</button><button onClick={saveScreenRecording}><Download/>保存视频</button><button className="primary" onClick={importScreenRecording}><Video/>导入剪辑</button></>}{screenStage === 'error' && <><button onClick={resetScreenRecording}>关闭</button><button className="primary" onClick={() => { resetScreenRecording(); window.setTimeout(() => void prepareScreenRecording(), 0) }}><MonitorUp/>重新选择</button></>}</div></section></div>}
     <footer><div className="time"><strong>{formatTime(currentTime, true)}</strong><span>/ {formatTime(mixerPlayback.duration, true)}</span></div><div className="transport"><button onClick={() => seek(Math.max(0, currentTime - 5))}><SkipBack/></button><button className="play" onClick={toggleMixerPlayback}>{mixerPlayback.playing ? <Pause fill="currentColor"/> : <Play fill="currentColor"/>}</button><button onClick={() => seek(Math.min(mixerPlayback.duration, currentTime + 5))}><SkipForward/></button></div><div className="zoom"><ZoomOut/><input type="range" defaultValue="60"/><ZoomIn/></div><div className="status"><RotateCcw/>{status}</div></footer>
   </div>
 }
